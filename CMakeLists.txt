@@ -29,6 +29,8 @@ set(sources
         src/Settings.cpp
         src/OnMeleeHit.cpp
         src/Main.cpp
+        src/Utils.cpp
+        src/OnFrame.cpp
 
         ${CMAKE_CURRENT_BINARY_DIR}/version.rc)
 

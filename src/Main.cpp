@@ -2,10 +2,18 @@
 #include "OnMeleeHit.h"
 #include "PrecisionAPI.h"
 #include "Settings.h"
+#include "Utils.h"
+#include "OnFrame.h"
 
 using namespace SKSE;
 using namespace SKSE::log;
 using namespace SKSE::stl;
+
+int globalInputCounter = 0;
+float fRangeMulti = 0.7f;
+float fDetectEnemy = 600.f;
+bool bShowWeaponSegment = true;
+int64_t ZacOnFrame::iFrameCount = 0;
 
 namespace {
     /**
@@ -27,11 +35,7 @@ namespace {
                 "Global", std::make_shared<spdlog::sinks::basic_file_sink_mt>(path->string(), true));
         }
 
-#ifndef NDEBUG
         const auto level = spdlog::level::trace;
-#else
-        const auto level = spdlog::level::info;
-#endif
 
         log->set_level(level);
         log->flush_on(level);
@@ -43,7 +47,7 @@ namespace {
     /**
      * Initialize the hooks.
      */
-    void InitializeHooks() {
+    void InitializeHitHooks() {
         log::trace("Initializing hooks...");
 
         OnMeleeHit::OnMeleeHitHook::InstallHook();
@@ -52,8 +56,10 @@ namespace {
     }
 
     void MessageHandler(SKSE::MessagingInterface::Message* a_msg) {
+        log::info("MessageHandler called");
         switch (a_msg->type) {
             case SKSE::MessagingInterface::kPostPostLoad: {
+                log::info("kPostPostLoad");
                 const auto precisionAPI =
                     reinterpret_cast<PRECISION_API::IVPrecision4*>(PRECISION_API::RequestPluginAPI());
                 if (precisionAPI) {
@@ -63,6 +69,7 @@ namespace {
             }
                 break;
             case SKSE::MessagingInterface::kDataLoaded: {
+                log::info("kDataLoaded");
                 auto parryingHandle = GetModuleHandleA("Parrying.dll");
                 if (parryingHandle) {
                     logger::error("Warning! ParryingRPG has detected that Parrying.dll is also loaded!");
@@ -76,9 +83,17 @@ namespace {
                 }
             }
                 break;
+            case SKSE::MessagingInterface::kInputLoaded: {
+                auto& eventProcessor = EventProcessor::GetSingleton();
+                RE::BSInputDeviceManager::GetSingleton()->AddEventSink(&eventProcessor);
+                log::info("input loaded");
+            } 
+                break;
         }
     }
 }  // namespace
+
+
 
 /**
  * This is the main callback for initializing the SKSE plugin, called just before Skyrim runs its main function.
@@ -105,8 +120,17 @@ SKSEPluginLoad(const LoadInterface* skse) {
         logger::error("Exception caught when loading settings! Default settings will be used");
     }
 
-    InitializeHooks();
+    InitializeHitHooks();
     SKSE::GetMessagingInterface()->RegisterListener(MessageHandler);
+
+    log::info("Registered main hooks. About to register Hit and Input");
+
+    auto& eventProcessor = EventProcessor::GetSingleton();
+    RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<RE::TESHitEvent>(&eventProcessor);
+
+    log::info("About to hook frame update");
+    ZacOnFrame::InstallFrameHook();
+
 
     log::info("{} has finished loading.", plugin->GetName());
     return true;

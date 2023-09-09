@@ -4,11 +4,15 @@
 #include "OnMeleeHit.h"
 
 using namespace OnMeleeHit;
+using namespace SKSE;
+using namespace SKSE::log;
 
 OnMeleeHitHook& OnMeleeHitHook::GetSingleton() noexcept {
     static OnMeleeHitHook instance;
     return instance;
 }
+
+
 
 void OnMeleeHitHook::InstallHook() {
     // Taken from: https://github.com/doodlum/MaxsuWeaponSwingParry-ng/blob/main/src/WeaponParry_Hooks.h
@@ -24,15 +28,39 @@ void OnMeleeHitHook::OnMeleeHit(RE::Actor* hit_causer, RE::Actor* hit_target, st
                                 void* a_unkptr) {
 
     // Code here is a mix of Fenix31415's, Maxsu's / doodlum's, and my own
+    log::info("-------OnMeleeHit");
     if (hit_causer && hit_target) {
+        log::info("About to check IsParryBasicChecks");
         if (OnMeleeHit::IsParryBasicChecks(hit_causer, hit_target)) {
+            log::info("About to check AI");
             RE::AIProcess* const attackerAI = hit_causer->GetActorRuntimeData().currentProcess;
             RE::AIProcess* const targetAI = hit_target->GetActorRuntimeData().currentProcess;
             if (attackerAI && targetAI) {
+                log::info("About to check GetAttackWeapon");
                 auto attackerWeapon = GetAttackWeapon(attackerAI);
                 auto targetWeapon = GetAttackWeapon(targetAI);
 
+                bool isFine = false;
+                if (!targetWeapon && hit_target->IsPlayerRef()) {
+                    log::info("About to get player");
+                    auto playerAA = RE::PlayerCharacter::GetSingleton();
+                    if (playerAA) {
+                        log::info("About to get equipped");
+                        auto equippedObject = playerAA->GetEquippedObject(false); //false - right hand
+                        if (equippedObject) {
+                            log::info("equipped valid");
+                            if (equippedObject->IsWeapon()) {
+                                log::info("about to static cast");
+                                //targetWeapon = RE::DYNAMIC_CAST(equippedObject, RE::TESForm, RE::TESObjectWEAP);
+                                
+                                targetWeapon = static_cast<RE::TESObjectWEAP*>(equippedObject);
+                            }
+                        }
+                    }
+                }
+
                 if (attackerWeapon && targetWeapon) {
+                    log::info("About to check IsParry");
                     if (OnMeleeHit::IsParry(hit_causer, hit_target, attackerAI, targetAI, attackerWeapon,
                                             targetWeapon)) {
                         if (!AttackerBeatsParry(hit_causer, hit_target, attackerWeapon, targetWeapon, attackerAI, targetAI)) {
@@ -40,7 +68,8 @@ void OnMeleeHitHook::OnMeleeHit(RE::Actor* hit_causer, RE::Actor* hit_target, st
                             const auto nodeName =
                                 (attackerAI->high->attackData->IsLeftAttack()) ? "SHIELD"sv : "WEAPON"sv;
 
-                            SKSE::GetTaskInterface()->AddTask([hit_causer, attackerWeapon, nodeName]() {
+
+                            SKSE::GetTaskInterface()->AddTask([hit_causer, nodeName]() {
                                 play_sound(hit_causer, 0x0003C73C);
                                 play_impact_1(hit_causer, nodeName);
                             });
@@ -159,7 +188,7 @@ double OnMeleeHit::GetScore(RE::Actor* actor, const RE::TESObjectWEAP* weapon,
         score += scoreSettings.femaleScore;
     }
 
-    if (actorAI->high->attackData->data.flags.any(RE::AttackData::AttackFlag::kPowerAttack)) {
+    if (actorAI && actorAI->high && actorAI->high->attackData && actorAI->high->attackData->data.flags.any(RE::AttackData::AttackFlag::kPowerAttack)) {
         score += scoreSettings.powerAttackScore;
     }
 
@@ -183,11 +212,11 @@ bool OnMeleeHit::IsParryBasicChecks(const RE::Actor* const hit_causer, const RE:
         return false;
     }
 
-    if (!IsAttacking(hit_target->AsActorState()->GetAttackState())) {
-        // Target must be attacking. No need to check really for the hit causer because,
-        // if our code is running at all, the hit causer must surely indeed be attacking.
-        return false;
-    }
+    //if (!IsAttacking(hit_target->AsActorState()->GetAttackState()) && !hit_target->IsPlayerRef()) {
+    //    // Target must be attacking. No need to check really for the hit causer because,
+    //    // if our code is running at all, the hit causer must surely indeed be attacking.
+    //    return false;
+    //}
 
     return true;
 }
@@ -195,8 +224,10 @@ bool OnMeleeHit::IsParryBasicChecks(const RE::Actor* const hit_causer, const RE:
 bool OnMeleeHit::IsParry(RE::Actor* hit_causer, RE::Actor* hit_target,
                          RE::AIProcess* const attackerAI, RE::AIProcess* const targetAI,
                          const RE::TESObjectWEAP* attackerWeapon, const RE::TESObjectWEAP* targetWeapon) {
-    if (attackerWeapon->IsMelee() && targetWeapon->IsMelee() && !attackerWeapon->IsHandToHandMelee() &&
-        !targetWeapon->IsHandToHandMelee()) {
+    log::info("att IsHH:{}, tar IsHH:{}", attackerWeapon->IsHandToHandMelee(), targetWeapon->IsHandToHandMelee());
+    //if (attackerWeapon->IsMelee() && targetWeapon->IsMelee() && !attackerWeapon->IsHandToHandMelee() &&
+    //    !targetWeapon->IsHandToHandMelee()) {
+    if (attackerWeapon->IsMelee() && targetWeapon->IsMelee()) {
         // Make sure that actors are facing each other
         auto angle = abs(hit_causer->GetHeading(true) - hit_target->GetHeading(true));
         if (angle > M_PI) {
@@ -207,10 +238,14 @@ bool OnMeleeHit::IsParry(RE::Actor* hit_causer, RE::Actor* hit_target,
             // Make sure that the weapons are close together
             RE::NiPoint3 attacker_from, attacker_to, victim_from, victim_to;
 
+            //log::info("About to get causer weapon position");
+
             if (!GetWeaponPositions(hit_causer, attackerAI, attacker_from,
                                     attacker_to)) {
                 return false;
             }
+
+            //log::info("About to get target weapon position. target:{}", hit_target->GetBaseObject()->GetName());
 
             if (!GetWeaponPositions(hit_target, targetAI, victim_from,
                                     victim_to)) {
@@ -218,7 +253,10 @@ bool OnMeleeHit::IsParry(RE::Actor* hit_causer, RE::Actor* hit_target,
             }
 
             const float d = Dist(attacker_from, attacker_to, victim_from, victim_to);
-            return d <= 120.0f;
+
+            log::info("Distance:{}", d);
+            //return d <= 120.0f;
+            return d <= 150.0f;
         }
     }
 
@@ -226,23 +264,45 @@ bool OnMeleeHit::IsParry(RE::Actor* hit_causer, RE::Actor* hit_target,
 }
 
 const RE::TESObjectWEAP* const OnMeleeHit::GetAttackWeapon(RE::AIProcess* const aiProcess) {
+    log::info("Checking attackWeapon.");
+    if (aiProcess) {
+        log::info("aiProcess fine.");
+        if (aiProcess->high) {
+            log::info("high fine.");
+            if (aiProcess->high->attackData) { // Interesting: if player has attacked before, then this is not NULL. If player has attacked and then block/swim/..., then this is NULL
+                log::info("attachData fine.");
+                log::info("bashflag == True? : {}",
+                          aiProcess->high->attackData->data.flags.all(RE::AttackData::AttackFlag::kBashAttack));
+            }
+        }
+    }
     if (aiProcess && aiProcess->high && aiProcess->high->attackData &&
         !aiProcess->high->attackData->data.flags.all(RE::AttackData::AttackFlag::kBashAttack)) {
+        log::info("About to check equipped");
         
         const RE::TESForm* equipped = aiProcess->high->attackData->IsLeftAttack() ? aiProcess->GetEquippedLeftHand()
                                                                                   : aiProcess->GetEquippedRightHand();
 
         if (equipped) {
+            log::info("equipped get");
             return equipped->As<RE::TESObjectWEAP>();
         }
+        log::info("failed to get equipped");
     }
+
+     log::info("return null");
 
     return nullptr;
 }
 
 bool OnMeleeHit::GetWeaponPositions(RE::Actor* actor, RE::AIProcess* const aiProcess,
                                     RE::NiPoint3& outFrom, RE::NiPoint3& outTo) {
-    const auto nodeName = (aiProcess->high->attackData->IsLeftAttack()) ? "SHIELD"sv : "WEAPON"sv;
+    const auto nodeName = "WEAPON"sv;
+    if (!aiProcess || !aiProcess->high || !aiProcess->high->attackData) {
+    } else {
+        const auto nodeName = (aiProcess->high->attackData->IsLeftAttack()) ? "SHIELD"sv : "WEAPON"sv;
+    }
+    
     const auto root = netimmerse_cast<RE::BSFadeNode*>(actor->Get3D());
     if (!root) 
         return false;
@@ -250,11 +310,52 @@ bool OnMeleeHit::GetWeaponPositions(RE::Actor* actor, RE::AIProcess* const aiPro
     if (!bone) 
         return false;
 
-    const float reach = Actor_GetReach(actor) * 0.75f;
+    if (!actor->IsPlayerRef()) {
+        log::info("===GetWeaponPositions: not player");
+    } else {
+        log::info("===GetWeaponPositions: player!");
+    }
+
+    log::info("about to check hands");
+
+    const auto rhand = netimmerse_cast<RE::NiNode*>(root->GetObjectByName("NPC R Hand [RHnd]"sv));
+    if (!rhand) return false;
+
+    const auto lhand = netimmerse_cast<RE::NiNode*>(root->GetObjectByName("NPC L Hand [LHnd]"sv));
+    if (!lhand) return false;
+
+
+    const float reach = Actor_GetReach(actor) * fRangeMulti;
+
     outFrom = bone->world.translate;
-    const auto weaponDirection =
-        RE::NiPoint3{bone->world.rotate.entry[0][1], bone->world.rotate.entry[1][1], bone->world.rotate.entry[2][1]};
-    outTo = outFrom + weaponDirection * reach;
+    log::info("outFrom({},{},{}), reach:{}", outFrom.x, outFrom.y, outFrom.z, reach);
+
+    RE::NiPoint3& rhandFrom = rhand->world.translate;
+    log::info("rhandFrom({},{},{})", rhandFrom.x, rhandFrom.y, rhandFrom.z);
+
+    RE::NiPoint3& lhandFrom = lhand->world.translate;
+    log::info("lhandFrom({},{},{})", lhandFrom.x, lhandFrom.y, lhandFrom.z);
+
+    //if (!actor->IsPlayerRef()) {
+    if (true) {
+        const auto weaponDirection = RE::NiPoint3{bone->world.rotate.entry[0][1], bone->world.rotate.entry[1][1],
+                                                  bone->world.rotate.entry[2][1]};
+        outTo = outFrom + weaponDirection * reach;
+    } else {
+        const auto weaponDirection = RE::NiPoint3{rhand->world.rotate.entry[0][1], rhand->world.rotate.entry[1][1],
+                                                  rhand->world.rotate.entry[2][1]};
+        outTo = rhandFrom + weaponDirection * reach;
+
+        const auto oriWeaponDirection = RE::NiPoint3{bone->world.rotate.entry[0][1], bone->world.rotate.entry[1][1],
+                                                     bone->world.rotate.entry[2][1]};
+        RE::NiPoint3& oriOutTo = outFrom;
+        oriOutTo = outFrom + oriWeaponDirection* reach;
+        log::info("oriOutTo({},{},{})", oriOutTo.x, oriOutTo.y, oriOutTo.z);
+    }
+
+    log::info("outTo({},{},{})", outTo.x, outTo.y, outTo.z);
+
+
     return true;
 }
 
@@ -318,19 +419,38 @@ void OnMeleeHit::play_sound(RE::TESObjectREFR* object, RE::FormID formid) {
     }
 }
 
+
+
 bool OnMeleeHit::play_impact_1(RE::Actor* actor, const RE::BSFixedString& nodeName) {
     auto root = netimmerse_cast<RE::BSFadeNode*>(actor->Get3D());
     if (!root) return false;
     auto bone = netimmerse_cast<RE::NiNode*>(root->GetObjectByName(nodeName));
     if (!bone) return false;
 
-    float reach = Actor_GetReach(actor) * 0.75f * 0.5f;
+    float reach = Actor_GetReach(actor) * fRangeMulti;
     auto weaponDirection =
         RE::NiPoint3{bone->world.rotate.entry[0][1], bone->world.rotate.entry[1][1], bone->world.rotate.entry[2][1]};
     RE::NiPoint3 to = bone->world.translate + weaponDirection * reach;
     RE::NiPoint3 P_V = {0.0f, 0.0f, 0.0f};
 
     return play_impact_2(actor, RE::TESForm::LookupByID<RE::BGSImpactData>(0x0004BB52), &P_V, &to, bone);
+}
+
+bool OnMeleeHit::debug_show_weapon_collide(RE::Actor* actor, const RE::BSFixedString& nodeName) {
+    auto root = netimmerse_cast<RE::BSFadeNode*>(actor->Get3D());
+    if (!root) return false;
+    auto bone = netimmerse_cast<RE::NiNode*>(root->GetObjectByName(nodeName));
+    if (!bone) return false;
+
+    float reach = Actor_GetReach(actor) * fRangeMulti;
+    auto weaponDirection =
+        RE::NiPoint3{bone->world.rotate.entry[0][1], bone->world.rotate.entry[1][1], bone->world.rotate.entry[2][1]};
+    RE::NiPoint3 from = bone->world.translate;
+    RE::NiPoint3 to = bone->world.translate + weaponDirection * reach;
+    RE::NiPoint3 P_V = {0.0f, 0.0f, 0.0f};
+
+    return play_impact_2(actor, RE::TESForm::LookupByID<RE::BGSImpactData>(0x0004BB54), &P_V, &to, bone) &&
+           play_impact_2(actor, RE::TESForm::LookupByID<RE::BGSImpactData>(0x0004BB54), &P_V, &from, bone);
 }
 
 // From: https://github.com/fenix31415/UselessFenixUtils

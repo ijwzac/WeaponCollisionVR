@@ -1,5 +1,10 @@
 #pragma once
 
+extern int globalInputCounter;
+extern float fRangeMulti;
+extern float fDetectEnemy;
+extern bool bShowWeaponSegment;
+
 // Thanks to: https://github.com/powerof3/CLibUtil
 namespace string {
     template <class T>

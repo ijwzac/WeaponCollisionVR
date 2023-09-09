@@ -4,6 +4,7 @@
 #include "PrecisionAPI.h"
 #include "Settings.h"
 
+
 namespace OnMeleeHit {
 #pragma warning(push)
 #pragma warning(disable : 4251)
@@ -51,7 +52,17 @@ namespace OnMeleeHit {
     RE::NiPoint3 constrainToSegment(const RE::NiPoint3& position, const RE::NiPoint3& a, const RE::NiPoint3& b);
     float dist(const RE::NiPoint3& A, const RE::NiPoint3& B, const RE::NiPoint3& C);
     void play_sound(RE::TESObjectREFR* object, RE::FormID formid);
+/*Impacts:
+(Default one) 0x0004BB52 WPNBlade1HandVsMetaImpact
+ 0x0004BB53 WPNBluntVsMetalImpact
+ 0x0004BB54 WPNArrowVsMetalImpact ; maybe try this out to have Dplay_Block_SparksN.esp increase the effect?
+ 0x0004BB55 WPNAxeVsMetalImpact
+ 0x0005CEF7 PHYGenericMetalSmallImpact
+ 0x0005CEF8 PHYGenericMetalMediumImpact
+ 0x0005CEFB PHYGenericMetalHeavyImpact
+*/
     bool play_impact_1(RE::Actor* actor, const RE::BSFixedString& nodeName);
+    bool debug_show_weapon_collide(RE::Actor* actor, const RE::BSFixedString& nodeName);
     bool play_impact_2(RE::TESObjectREFR* a, RE::BGSImpactData* impact, RE::NiPoint3* P_V, RE::NiPoint3* P_from,
                      RE::NiNode* bone);
     bool play_impact_3(RE::TESObjectCELL* cell, float a_lifetime, const char* model, RE::NiPoint3* a_rotation,
@@ -101,3 +112,4 @@ namespace OnMeleeHit {
 
 #pragma warning(pop)
 }  // namespace OnMeleeHit
+
