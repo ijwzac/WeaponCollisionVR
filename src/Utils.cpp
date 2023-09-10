@@ -106,3 +106,18 @@ RE::BSEventNotifyControl EventProcessor::ProcessEvent(RE::InputEvent* const* eve
 
     return RE::BSEventNotifyControl::kContinue;
 }
+
+bool IsNiPointZero(const RE::NiPoint3& pos) {
+    if (pos.x == 0.0f && pos.y == 0.0f && pos.z == 0.0f) {
+        return true;
+    } else {
+        return false;
+    }
+}
+
+bool AnyPointZero(const RE::NiPoint3& A, const RE::NiPoint3& B, const RE::NiPoint3& C, const RE::NiPoint3& D) { 
+    if (IsNiPointZero(A) || IsNiPointZero(B) || IsNiPointZero(C) || IsNiPointZero(D)) {
+        return true;
+    }
+    return false;
+}

@@ -2,10 +2,14 @@
 #define _USE_MATH_DEFINES
 #include <math.h>
 #include "OnMeleeHit.h"
+#include "Utils.h"
+
 
 using namespace OnMeleeHit;
 using namespace SKSE;
 using namespace SKSE::log;
+
+OriMeleeHit lastMeleeHit;
 
 OnMeleeHitHook& OnMeleeHitHook::GetSingleton() noexcept {
     static OnMeleeHitHook instance;
@@ -26,6 +30,11 @@ void OnMeleeHitHook::InstallHook() {
 
 void OnMeleeHitHook::OnMeleeHit(RE::Actor* hit_causer, RE::Actor* hit_target, std::int64_t a_int1, bool a_bool,
                                 void* a_unkptr) {
+    log::trace("Delay a hit");
+    // If hitting the player, we record everything we need to call the vanilla _OnMeleeHit, and call it a few frames later
+    auto h = OriMeleeHit(iFrameCount + iDelayEnemyHit, hit_causer, hit_target, a_int1, a_bool, a_unkptr);
+    meleeQueue.PushCopy(h);
+    return;
 
     // Code here is a mix of Fenix31415's, Maxsu's / doodlum's, and my own
     log::info("-------OnMeleeHit");
@@ -109,6 +118,7 @@ bool OnMeleeHit::AttackerBeatsParry(RE::Actor* attacker, RE::Actor* target, cons
 double OnMeleeHit::GetScore(RE::Actor* actor, const RE::TESObjectWEAP* weapon,
                             RE::AIProcess* const actorAI, const Settings::Scores& scoreSettings) {
     double score = 0.0;
+
 
     // Need to check for Animated Armoury keywords first, because its weapons
     // ALSO have some of the vanilla weapon type keywords (but we want the AA
@@ -252,11 +262,11 @@ bool OnMeleeHit::IsParry(RE::Actor* hit_causer, RE::Actor* hit_target,
                 return false;
             }
 
-            const float d = Dist(attacker_from, attacker_to, victim_from, victim_to);
+            auto result = Dist(attacker_from, attacker_to, victim_from, victim_to);
 
-            log::info("Distance:{}", d);
+            log::info("Distance:{}", result.dist);
             //return d <= 120.0f;
-            return d <= 150.0f;
+            return result.dist <= 150.0f;
         }
     }
 
@@ -363,7 +373,13 @@ bool OnMeleeHit::IsAttacking(const RE::ATTACK_STATE_ENUM attackState) {
     return attackState == RE::ATTACK_STATE_ENUM::kHit || attackState == RE::ATTACK_STATE_ENUM::kSwing;
 }
 
-float OnMeleeHit::Dist(const RE::NiPoint3& A, const RE::NiPoint3& B, const RE::NiPoint3& C, const RE::NiPoint3& D) {
+DistResult OnMeleeHit::Dist(const RE::NiPoint3& A, const RE::NiPoint3& B, const RE::NiPoint3& C,
+                            const RE::NiPoint3& D) {
+    // Check if any point is (0,0,0)
+    if (AnyPointZero(A, B, C, D)) {
+        RE::NiPoint3 tmp;
+        return DistResult(123456.0f, tmp);
+    }
     const auto CD = D - C;
     float CD2 = CD * CD;
     auto inPlaneA = A - (CD * (CD * (A - C) / CD2));
@@ -377,7 +393,7 @@ float OnMeleeHit::Dist(const RE::NiPoint3& A, const RE::NiPoint3& B, const RE::N
         t = inPlaneBA * (C - inPlaneA) / inPlaneBA2;
     auto segABtoLineCD = Lerp(A, B, Clamp01(t));
 
-    return dist(A, B, constrainToSegment(segABtoLineCD, C, D));
+    return DistResult(dist(A, B, constrainToSegment(segABtoLineCD, C, D)), segABtoLineCD);
 }
 
 RE::NiPoint3 OnMeleeHit::Lerp(const RE::NiPoint3& A, const RE::NiPoint3& B, const float k) 

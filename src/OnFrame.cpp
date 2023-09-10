@@ -63,38 +63,39 @@ void ZacOnFrame::CollisionDetection() {
         log::warn("Player not 3D loaded. Shouldn't happen");
         return;
     }
-    const auto playerRoot = netimmerse_cast<RE::BSFadeNode*>(playerActor->Get3D());
-    if (!playerRoot) {
-        log::warn("Fail to find playerRoot");
+
+    // See if we need to fire a delayed melee event
+    log::trace("About to check meleeQueue");
+    auto lastMeleeHit = meleeQueue.GetMatchOriMelee(iFrameCount);
+    while (lastMeleeHit) {
+        lastMeleeHit->shouldHitFrame = -1;  // this doesn't delete it, but won't be used and will eventually be cleared
+        log::trace("Handling a delayed hit");
+        if (lastMeleeHit->hit_causer) {
+            auto col = colBuffer.GetThisEnemyLatestCollision(lastMeleeHit->hit_causer);
+            if (col && !col->shouldNullifyEnemyCurretHit()) {
+                log::trace("A delayed hit is fired");
+                OnMeleeHit::OnMeleeHitHook::GetSingleton().FireOriMeleeHit(
+                    lastMeleeHit->hit_causer, lastMeleeHit->hit_target, lastMeleeHit->a_int1, lastMeleeHit->a_bool,
+                    lastMeleeHit->a_unkptr);
+            }
+        }
+        lastMeleeHit = meleeQueue.GetMatchOriMelee(iFrameCount);
+    }
+    log::trace("Finished checking meleeQueue");
+
+    if (playerActor->IsBlocking()) {
+        log::trace("Player is blocking");
         return;
     }
+
     
     // Get player's weapons
-    const auto nodeNameL = "SHIELD"sv; // This is the node name of left hand weapon, no matter if it's shield, sword, unarmed
-    const auto nodeNameR = "WEAPON"sv;
-
-    const auto weaponL = netimmerse_cast<RE::NiNode*>(playerRoot->GetObjectByName(nodeNameL));
-    const auto weaponR = netimmerse_cast<RE::NiNode*>(playerRoot->GetObjectByName(nodeNameR));
-    if (!weaponL) {
-        log::warn("Fail to get player's left weapon");
-        return;
-    }
-    else if (!weaponR) {
-        log::warn("Fail to get player's right weapon");
+    RE::NiPoint3 posWeaponBottomL, posWeaponBottomR, posWeaponTopL, posWeaponTopR;
+    if (!FrameGetWeaponPos(playerActor, posWeaponBottomL, posWeaponBottomR, posWeaponTopL, posWeaponTopR, true)) {
+        log::warn("Fail to get player's weapon pos");
         return;
     }
 
-    const RE::NiPoint3& posWeaponBottomL = weaponL->world.translate;
-    const RE::NiPoint3& posWeaponBottomR = weaponR->world.translate;
-
-    const float reach = OnMeleeHit::Actor_GetReach(playerActor) * fRangeMulti;
-    const auto weaponDirectionL = RE::NiPoint3{weaponL->world.rotate.entry[0][1], weaponL->world.rotate.entry[1][1],
-                                                  weaponL->world.rotate.entry[2][1]};
-    const auto weaponDirectionR = RE::NiPoint3{weaponR->world.rotate.entry[0][1], weaponR->world.rotate.entry[1][1],
-                                               weaponR->world.rotate.entry[2][1]};
-    const RE::NiPoint3& posWeaponTopL = posWeaponBottomL + weaponDirectionL * reach;
-    const RE::NiPoint3& posWeaponTopR = posWeaponBottomR + weaponDirectionR * reach;
-    // log::trace("posWeaponTopL({},{},{}), reach:{}", posWeaponTopL.x, posWeaponTopL.y, posWeaponTopL.z, reach);
 
     // Get nearby enemies
     std::vector<RE::TESObjectREFR*> vNearbyObj;
@@ -118,10 +119,21 @@ void ZacOnFrame::CollisionDetection() {
             }
             logger::trace("Cast success and not player or dead. Name:{}", actorNPC->GetBaseObject()->GetName());
 
+            // See if a recent collision happens to this actor
+            Collision* recentCol = colBuffer.GetThisEnemyLatestCollision(actorNPC);
+            if (recentCol) {
+                if ((*recentCol).shouldIgnoreCollision()) {
+                    logger::trace("Ignore collision and push enemy. Enemy:{}", actorNPC->GetBaseObject()->GetName());
+                    recentCol->ChangeVelocity();
+                    continue;
+                }
+            }
             // TODO: Check if NPC is enemy
             
 
+            // TODO: consider make it that even if NPC is not attacking, still enable collision
             // Check if NPC is attacking, which hand.
+            // 
             // TODO: how to see if NPC is using both two weapons? Flags kRotatingAttack isn't for this
             //      Also, 44313 has an attack move that scissors the player with two hands, it's right hand and no flag can detect it
             bool isLeftAttack;
@@ -147,21 +159,308 @@ void ZacOnFrame::CollisionDetection() {
             isLeftAttack = attackerAI->high->attackData->IsLeftAttack();
             isPowerAttack = attackerAI->high->attackData->data.flags.any(RE::AttackData::AttackFlag::kPowerAttack);
 
-
-            const auto NPCRoot = netimmerse_cast<RE::BSFadeNode*>(actorNPC->Get3D());
-            if (!NPCRoot) {
-                logger::warn("Failed to get NPC Root");
+            // Get enemies' weapons
+            RE::NiPoint3 posNPCWeaponBottomL, posNPCWeaponBottomR, posNPCWeaponTopL, posNPCWeaponTopR;
+            if (!FrameGetWeaponPos(actorNPC, posNPCWeaponBottomL, posNPCWeaponBottomR, posNPCWeaponTopL,
+                                   posNPCWeaponTopR, false)) {
+                log::warn("Fail to get NPC's weapon pos");
                 continue;
             }
 
-            // Immediate TODO: put the get weapon location code for player into a function, and use it here
+            // See if player's weapon collides with enemies' weapons
+            // For now, we check both the collision between any weapon regardlessly 
+            //      (enemy's L and player's L and R, and enemy's R and player's L and R)
 
+            // TODO: make Dist also return the point of collision, so we show spark on that point
+            RE::NiPoint3 contactPos; // approximately where collision happens
+            auto dis_playerL_enemyL =
+                OnMeleeHit::Dist(posWeaponBottomL, posWeaponTopL, posNPCWeaponBottomL, posNPCWeaponTopL);
+            auto dis_playerL_enemyR =
+                OnMeleeHit::Dist(posWeaponBottomL, posWeaponTopL, posNPCWeaponBottomR, posNPCWeaponTopR);
+            auto dis_playerR_enemyL =
+                OnMeleeHit::Dist(posWeaponBottomR, posWeaponTopR, posNPCWeaponBottomL, posNPCWeaponTopL);
+            auto dis_playerR_enemyR =
+                OnMeleeHit::Dist(posWeaponBottomR, posWeaponTopR, posNPCWeaponBottomR, posNPCWeaponTopR);
+
+            bool isCollision = false;
+            bool isEnemyLeft = false;
+            ;
+            if (dis_playerL_enemyL.dist < fCollisionDistThres) {
+                isCollision = true;
+                isEnemyLeft = true;
+                contactPos = dis_playerL_enemyL.contactPoint;
+            } else if (dis_playerL_enemyR.dist < fCollisionDistThres) {
+                isCollision = true;
+                contactPos = dis_playerL_enemyR.contactPoint;
+            } else if (dis_playerR_enemyL.dist < fCollisionDistThres) {
+                isCollision = true;
+                isEnemyLeft = true;
+                contactPos = dis_playerR_enemyL.contactPoint;
+            } else if (dis_playerR_enemyR.dist < fCollisionDistThres) {
+                isCollision = true;
+                contactPos = dis_playerR_enemyR.contactPoint;
+            } 
+            if (isCollision) {
+                auto col = Collision(actorNPC, iFrameCount,
+                                     CalculatePushVector(playerActor->GetPosition(), actorNPC->GetPosition(), true));
+                log::trace("Collision with {} on frame {}", col.getEnemy()->GetBaseObject()->GetName(),
+                           col.getFrame());
+                colBuffer.PushCopy(col);
+                CollisionEffect(playerActor, actorNPC, contactPos, isEnemyLeft);
+            }
         }
     }
 
-    // Get enemies' weapons
+    
 
-    // See if player's weapon collides with enemies' weapons
+    
 
     // Create collision data
+}
+
+void ZacOnFrame::CollisionEffect(RE::Actor* playerActor, RE::Actor* enemyActor, RE::NiPoint3 contactPos, bool isEnemyLeft) {
+    const auto nodeName = isEnemyLeft?
+        "SHIELD"sv: "WEAPON"sv;
+    auto root = netimmerse_cast<RE::BSFadeNode*>(enemyActor->Get3D());
+    if (!root) return;
+    auto bone = netimmerse_cast<RE::NiNode*>(root->GetObjectByName(nodeName));
+    if (!bone) return;
+    const auto nodeNameFoot = "NPC L Toe0 [LToe]"sv;
+    auto boneFoot = netimmerse_cast<RE::NiNode*>(root->GetObjectByName(nodeNameFoot));
+    if (!boneFoot) return;
+    // Display spark and sound
+    SKSE::GetTaskInterface()->AddTask([enemyActor, contactPos, bone, boneFoot]() {
+        RE::NiPoint3 contact = contactPos;
+        RE::NiPoint3 P_V = {0.0f, 0.0f, 0.0f};
+        RE::NiPoint3 foot = boneFoot->world.translate;
+        OnMeleeHit::play_sound(enemyActor, 0x0003C73C);
+        // Display spark on enemy's weapon, at the collision point
+        OnMeleeHit::play_impact_2(enemyActor, RE::TESForm::LookupByID<RE::BGSImpactData>(0x0004BB54), &P_V, &contact,
+                                  bone);
+        // Display dust under enemy's foot
+        // 13CBA, WPNBlade1HandVsDirtImpact; 
+        OnMeleeHit::play_impact_2(enemyActor, RE::TESForm::LookupByID<RE::BGSImpactData>(0x00013CBA), &P_V, &foot,
+                                  boneFoot);
+    });
+
+
+    //enemyActor->NotifyAnimationGraph("recoilStop");
+    //enemyActor->NotifyAnimationGraph("AttackStop");
+    //enemyActor->NotifyAnimationGraph("recoilLargeStart"); //Collision_Recoil
+}
+
+
+void debug_show_weapon_range(RE::Actor* actor, RE::NiPoint3& posWeaponBottom, RE::NiPoint3& posWeaponTop,
+                             RE::NiNode* bone) {
+    RE::NiPoint3 P_V = {0.0f, 0.0f, 0.0f};
+    OnMeleeHit::play_impact_2(actor, RE::TESForm::LookupByID<RE::BGSImpactData>(0x0004BB54), &P_V, &posWeaponTop, bone);
+    OnMeleeHit::play_impact_2(actor, RE::TESForm::LookupByID<RE::BGSImpactData>(0x0004BB54), &P_V, &posWeaponBottom, bone);
+}
+
+// A hacky way to avoid a bug when both player and enemy are using two-handed weapons
+// The bug was, their left hands are set to (0,0,0), so they collide :D
+//void SetNiPointSpecial(RE::NiPoint3& pos) {
+//    pos.x = 9999.0f;
+//    pos.y = 9999.0f;
+//    pos.z = 9999.0f;
+//    return;
+//}
+
+// This function modifies the 4 NiPoint3 passed in. If failed to get the 3D of actor, it return false.
+// Otherwise, it returns true, even if some NiPoint3 are not modified. 
+// Caller needs to detect if they are modified, by calling IsNiPointZero()
+bool ZacOnFrame::FrameGetWeaponPos(RE::Actor* actor, RE::NiPoint3& posWeaponBottomL, RE::NiPoint3& posWeaponBottomR,
+                       RE::NiPoint3& posWeaponTopL,
+                       RE::NiPoint3& posWeaponTopR, bool isPlayer) {
+    const auto actorRoot = netimmerse_cast<RE::BSFadeNode*>(actor->Get3D());
+    if (!actorRoot) {
+        log::warn("Fail to find actor:{}", actor->GetBaseObject()->GetName());
+        return false;
+    }
+
+    const auto nodeNameL =
+        "SHIELD"sv;  // This is the node name of left hand weapon, no matter if it's shield, sword, unarmed
+    const auto nodeNameR = "WEAPON"sv;
+
+    const auto weaponL = netimmerse_cast<RE::NiNode*>(actorRoot->GetObjectByName(nodeNameL));
+    const auto weaponR = netimmerse_cast<RE::NiNode*>(actorRoot->GetObjectByName(nodeNameR));
+
+
+    // check whether the actor really equips a weapon on that hand
+    // one-hand weapon: correctly on each hand
+    // fist: equipL/R is null
+    // bow: both hand are same
+    // two-hand weapon: both hands are the same
+    // shield: on left hand
+    bool isEquipL(false), isEquipR(false), isBow(false), isTwoHandedAxe(false), isWarHammer(false),
+        isGreatSword(false), hasShield(false), isSwordL(false), isSwordR(false), isAxeL(false), isAxeR(false),
+        isMaceL(false), isMaceR(false), isStaffL(false), isStaffR(false), isFistL(false), isFistR(false),
+        isDaggerL(false), isDaggerR(false);
+    if (auto equipR = actor->GetEquippedObject(false); equipR) {
+        isEquipR = true;
+        if (auto equipWeapR = equipR->As<RE::TESObjectWEAP>(); equipWeapR) {
+            if (equipWeapR->HasKeywordString("WeapTypeDagger")) {
+                isDaggerR = true;
+            } else if (equipWeapR->HasKeywordString("WeapTypeMace")) {
+                isMaceR = true;
+            } else if (equipWeapR->HasKeywordString("WeapTypeSword")) {
+                isSwordR = true;
+            } else if (equipWeapR->HasKeywordString("WeapTypeWarAxe")) {
+                isAxeR = true;
+            } else if (equipWeapR->IsStaff()) {
+                isStaffR = true;
+            }
+        }
+    } else {
+        // fist
+        isEquipR = true;
+        isFistR = true;
+    }
+    if (auto equipL = actor->GetEquippedObject(true); equipL) {
+        isEquipL = true;
+        if (auto equipWeapL = equipL->As<RE::TESObjectWEAP>(); equipWeapL) {
+            if (equipWeapL->IsBow()) {
+                isBow = true;
+                isEquipL = true;
+                isEquipR = false;
+            } else if (equipWeapL->IsTwoHandedSword()) {
+                isGreatSword = true;
+                isEquipL = false;
+                isEquipR = true;
+            } else if (equipWeapL->IsTwoHandedAxe() ) {
+                isTwoHandedAxe = true;
+                isEquipL = false;
+                isEquipR = true;
+            } else if (equipWeapL->HasKeywordString("WeapTypeWarhammer")) {
+                isWarHammer = true;
+                isEquipL = false;
+                isEquipR = true;
+            } else if (equipWeapL->HasKeywordString("WeapTypeDagger")) {
+                isDaggerL = true;
+            } else if (equipWeapL->HasKeywordString("WeapTypeMace")) {
+                isMaceL = true;
+            } else if (equipWeapL->HasKeywordString("WeapTypeSword")) {
+                isSwordL = true;
+            } else if (equipWeapL->HasKeywordString("WeapTypeWarAxe")) {
+                isAxeL = true;
+            } else if (equipWeapL->IsStaff()) {
+                isStaffL = true;
+            }
+        }
+        if (equipL->IsArmor()) {
+            hasShield = true;
+        }
+    } else {
+        // fist
+        isEquipL = true;
+        isFistL = true;
+    }
+
+    if (weaponL && isEquipL) {
+        float reachL(0.0f), handleL(0.0f);
+        if (isFistL) { 
+            reachL = 10.0f;
+            handleL = 10.0f;
+        } else if (isBow) { // OK
+            reachL = 70.0f;
+            handleL = 70.0f;
+        } else if (isDaggerL) { // OK
+            reachL = 20.0f;
+            handleL = 10.0f;
+        } else if (isSwordL) { // OK
+            reachL = 80.0f;
+            handleL = 12.0f;
+        } else if (isAxeL) { // OK
+            reachL = 50.0f;
+            handleL = 12.0f;
+        } else if (isMaceL) { // OK
+            reachL = 50.0f;
+            handleL = 12.0f;
+        } else if (isStaffL) { // OK
+            reachL = 70.0f;
+            handleL = 70.0f;
+        } else if (hasShield) {
+            reachL = 30.0f;
+            handleL = 30.0f;
+        }
+        reachL *= fRangeMulti;
+        handleL *= fRangeMulti;
+        posWeaponBottomL = weaponL->world.translate;
+        const auto weaponDirectionL = RE::NiPoint3{weaponL->world.rotate.entry[0][1], weaponL->world.rotate.entry[1][1],
+                                                   weaponL->world.rotate.entry[2][1]};
+        posWeaponTopL = posWeaponBottomL + weaponDirectionL * reachL;
+        posWeaponBottomL = posWeaponBottomL - weaponDirectionL * handleL;
+        
+        //debug_show_weapon_range(actor, posWeaponBottomL, posWeaponTopL, weaponL);
+
+    } else {
+        log::trace("Doesn't get left weapon. actor:{}", actor->GetBaseObject()->GetName());
+        /*if (isPlayer) {
+            SetNiPointSpecial(posWeaponBottomL);
+            SetNiPointSpecial(posWeaponTopL);
+        }*/
+        
+    }
+    
+    if (weaponR && isEquipR) {
+        float reachR(0.0f), handleR(0.0f);
+        if (isFistR) {
+            reachR = 10.0f;
+            handleR = 10.0f;
+        }else if (isTwoHandedAxe || isWarHammer) { // OK
+            reachR = 60.0f;
+            handleR = 70.0f;
+        } else if (isGreatSword) { // OK
+            reachR = 100.0f;
+            handleR = 20.0f;
+        } else if (isDaggerR) { // OK
+            reachR = 20.0f;
+            handleR = 10.0f;
+        } else if (isSwordR) {  // OK
+            reachR = 80.0f;
+            handleR = 12.0f;
+        } else if (isAxeR) {  // OK
+            reachR = 50.0f;
+            handleR = 12.0f;
+        } else if (isMaceR) {  // OK
+            reachR = 50.0f;
+            handleR = 12.0f;
+        } else if (isStaffR) {  // OK
+            reachR = 70.0f;
+            handleR = 70.0f;
+        }
+        reachR *= fRangeMulti;
+        handleR *= fRangeMulti;
+        posWeaponBottomR = weaponR->world.translate;
+        const auto weaponDirectionR = RE::NiPoint3{weaponR->world.rotate.entry[0][1], weaponR->world.rotate.entry[1][1],
+                                                   weaponR->world.rotate.entry[2][1]};
+        posWeaponTopR = posWeaponBottomR + weaponDirectionR * reachR;
+        posWeaponBottomR = posWeaponBottomR - weaponDirectionR * handleR;
+
+        //debug_show_weapon_range(actor, posWeaponBottomR, posWeaponTopR, weaponR);
+    } else {
+        log::trace("Doesn't get right weapon. actor:{}", actor->GetBaseObject()->GetName());
+        /*if (isPlayer) {
+            SetNiPointSpecial(posWeaponBottomL);
+            SetNiPointSpecial(posWeaponTopL);
+        }*/
+    }
+
+    
+    return true;
+}
+
+
+RE::hkVector4 ZacOnFrame::CalculatePushVector(RE::NiPoint3 sourcePos, RE::NiPoint3 targetPos, bool isEnemy) {
+    RE::NiPoint3 pushDirection = targetPos - sourcePos;
+    // Normalize the direction
+    float length =
+        sqrt(pushDirection.x * pushDirection.x + pushDirection.y * pushDirection.y + pushDirection.z * pushDirection.z);
+    if (length > 0.0f) {  // avoid division by zero
+        pushDirection.x /= length;
+        pushDirection.y /= length;
+        pushDirection.z /= length;
+    }
+    float pushMulti = isEnemy ? fEnemyPushMulti : fPlayerPushMulti;
+    return RE::hkVector4(pushDirection.x * pushMulti, pushDirection.y * pushMulti, 0.0f, 0.0f);
 }

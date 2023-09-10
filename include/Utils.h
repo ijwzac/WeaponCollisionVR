@@ -17,3 +17,6 @@ public:
     RE::BSEventNotifyControl ProcessEvent(RE::InputEvent* const* eventPtr, RE::BSTEventSource<RE::InputEvent*>*);
 };
 
+bool IsNiPointZero(const RE::NiPoint3& pos);
+
+bool AnyPointZero(const RE::NiPoint3& A, const RE::NiPoint3& B, const RE::NiPoint3& C, const RE::NiPoint3& D);

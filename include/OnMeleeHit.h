@@ -4,6 +4,76 @@
 #include "PrecisionAPI.h"
 #include "Settings.h"
 
+using namespace SKSE;
+using namespace SKSE::log;
+
+// Stores the original OnMeleeHit function. Currently only store one
+class OriMeleeHit {
+public:
+    int64_t shouldHitFrame;
+    RE::Actor* hit_causer;
+    RE::Actor* hit_target;
+    std::int64_t a_int1;
+    bool a_bool;
+    void* a_unkptr;
+    OriMeleeHit()
+        : shouldHitFrame(-1),
+          hit_causer(nullptr),
+          hit_target(nullptr),
+          a_int1(0),
+          a_bool(false),
+          a_unkptr(nullptr) {}
+
+    OriMeleeHit(int64_t shouldHitF, RE::Actor* hit_causer, RE::Actor* hit_target, std::int64_t a_int1, bool a_bool,
+                void* a_unkptr)
+        : shouldHitFrame(shouldHitF),
+          hit_causer(hit_causer),
+          hit_target(hit_target),
+          a_int1(a_int1),
+          a_bool(a_bool),
+          a_unkptr(a_unkptr) {}
+};
+
+class OriMeleeQueue {
+public:
+    std::vector<OriMeleeHit> buffer;
+    std::size_t capacity;
+    std::size_t indexCurrent;
+
+    OriMeleeQueue(std::size_t cap) : buffer(cap), capacity(cap), indexCurrent(0) {}
+
+    void PushCopy(OriMeleeHit h) { 
+        log::trace("In OriMeleeQueue::PushCopy");
+        buffer[indexCurrent] = h;
+        indexCurrent = (indexCurrent + 1) % capacity;
+    }
+
+    // May return null. Caller should call this multiple times until return null
+    OriMeleeHit* GetMatchOriMelee(int64_t currentFrame) {
+        log::trace("In OriMeleeQueue::GetMatchOriMelee");
+        if (buffer.empty()) {
+            return nullptr;
+        }
+        std::size_t i = indexCurrent;
+        do {
+            i = (i == 0) ? capacity - 1 : i - 1;
+            if (buffer[i].shouldHitFrame == currentFrame) {
+                return &buffer[i];
+            }
+        } while (i != indexCurrent);
+        return nullptr;
+    }
+};
+
+extern OriMeleeQueue meleeQueue;
+
+class DistResult {
+public:
+    float dist;
+    RE::NiPoint3 contactPoint;
+
+    DistResult(float d, RE::NiPoint3 p) : dist(d), contactPoint(p) {}
+};
 
 namespace OnMeleeHit {
 #pragma warning(push)
@@ -14,6 +84,7 @@ namespace OnMeleeHit {
         [[nodiscard]] static OnMeleeHitHook& GetSingleton() noexcept;
 
         static void InstallHook();
+
 
     private:
         OnMeleeHitHook() = default;
@@ -30,6 +101,12 @@ namespace OnMeleeHit {
 
         /** The original function */
         static inline REL::Relocation<decltype(OnMeleeHit)> _OnMeleeHit;
+
+    public:
+        static void FireOriMeleeHit(RE::Actor* attacker, RE::Actor* target, std::int64_t a_int1, bool a_bool,
+                                    void* a_unkptr) {
+            _OnMeleeHit(attacker, target, a_int1, a_bool, a_unkptr);
+        }
     };
 
     // Below here some helper functions
@@ -46,7 +123,7 @@ namespace OnMeleeHit {
                  const RE::TESObjectWEAP* attackerWeapon, const RE::TESObjectWEAP* targetWeapon);
     bool IsParryBasicChecks(const RE::Actor* const hit_causer, const RE::Actor* const hit_target);
     bool IsAttacking(const RE::ATTACK_STATE_ENUM state_a);
-    float Dist(const RE::NiPoint3& A, const RE::NiPoint3& B, const RE::NiPoint3& C, const RE::NiPoint3& D);
+    DistResult Dist(const RE::NiPoint3& A, const RE::NiPoint3& B, const RE::NiPoint3& C, const RE::NiPoint3& D);
     RE::NiPoint3 Lerp(const RE::NiPoint3& A, const RE::NiPoint3& B, const float k);
     float Clamp01(const float t);
     RE::NiPoint3 constrainToSegment(const RE::NiPoint3& position, const RE::NiPoint3& a, const RE::NiPoint3& b);

@@ -1,9 +1,33 @@
 #pragma once
 
+// Global
+extern int64_t iFrameCount;
+
+// Debug
 extern int globalInputCounter;
-extern float fRangeMulti;
-extern float fDetectEnemy;
 extern bool bShowWeaponSegment;
+
+// detect nearby enemy
+extern float fDetectEnemy;
+
+// collision difficulty
+extern float fRangeMulti; // controls the effective length of weapon in this mod
+extern float fCollisionDistThres; // if two weapons are closer than this number, it's a collision
+
+// Prevent collision if there is a recent one on the same enemy
+extern int64_t collisionIgnoreDur; // after a collision, within this number of frames, don't compute collision of the same enemy
+
+// collision effect
+extern float fEnemyPushMulti;
+extern float fPlayerPushMulti;
+
+// onMeleeHit settings
+extern int64_t collisionEffectDurEnemyShort; // after a collision, within this number of frames, a hit event must be affected
+extern int64_t
+    collisionEffectDurEnemyLong;  // after a collision, within this number of frames, 
+                            // a hit event is affected if affectEnemyOnHit/affectPlayerOnHit is 1
+extern int64_t iDelayEnemyHit; // When enemy hit player, delay that event for how many frames
+
 
 // Thanks to: https://github.com/powerof3/CLibUtil
 namespace string {
