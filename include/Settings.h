@@ -2,6 +2,7 @@
 
 // Global
 extern int64_t iFrameCount;
+//extern RE::BSScript::IVirtualMachine* papyrusVM;
 
 // Debug
 extern int globalInputCounter;
@@ -17,9 +18,33 @@ extern float fCollisionDistThres; // if two weapons are closer than this number,
 // Prevent collision if there is a recent one on the same enemy
 extern int64_t collisionIgnoreDur; // after a collision, within this number of frames, don't compute collision of the same enemy
 
-// collision effect
-extern float fEnemyPushMulti;
+// collision effect on enemy
+extern float fEnemyPushMulti; // the speed multiplier that the enemy will be pushed
+extern float fEnemyPushMaxDist; // the max distance the enemy will be pushed
+extern float fEnemyRotStep; // the angle enemy rotates every frame. Frame decided by RotateFrame()
+
+extern float fEnemyStaCostMin; // minimal stamina cost to enemy
+extern float fEnemyStaCostMax;  // max stamina cost to enemy. Power attack X2 is after this check
+extern float fEnemyStaCostWeapMulti; // multiplier of stamina cost. 
+                                    // The value after mutliply still need to fit in the min and max
+extern float fEnemyStaStopThresPer;  // when enemy stamina below this percent, they stop current attack
+extern float fEnemyStaLargeRecoilThresPer;  // when enemy stamina below this percent, they stop and have large recoil
+
+// collision effect on player
+// Note: even if player's stamina is 0, they can still parry
 extern float fPlayerPushMulti;
+extern float fPlayerStaCostMax;        // max stamina cost to player
+extern float fPlayerStaCostWeapMulti;  // multiplier of enemy's attack power.
+extern float fPlayerStaCostMin;        // multiplier of stamina cost. 
+                                      // The value after mutliply still need to fit in the min and max
+extern float fPlayerWeaponSpeedRewardThres; // when player moves weapon at higher speed than this, their stamina cost is reduced by half
+extern float fPlayerWeaponSpeedReward; // Multiplier os stamina cost if high speed
+extern float fPlayerWeaponSpeedRewardThres2;
+extern float fPlayerWeaponSpeedReward2;
+extern int iHapticStrMin;
+extern int iHapticStrMax;
+extern float fHapticMulti; // same logic above. Haptic decided by stamina cost
+extern int iHapticLengthMicroSec; 
 
 // onMeleeHit settings
 extern int64_t collisionEffectDurEnemyShort; // after a collision, within this number of frames, a hit event must be affected

@@ -95,6 +95,8 @@ void ZacOnFrame::CollisionDetection() {
         log::warn("Fail to get player's weapon pos");
         return;
     }
+    speedBuf.Push(WeaponPos(posWeaponBottomL, posWeaponTopL), true);
+    speedBuf.Push(WeaponPos(posWeaponBottomR, posWeaponTopR), false);
 
 
     // Get nearby enemies
@@ -125,17 +127,26 @@ void ZacOnFrame::CollisionDetection() {
                 if ((*recentCol).shouldIgnoreCollision()) {
                     logger::trace("Ignore collision and push enemy. Enemy:{}", actorNPC->GetBaseObject()->GetName());
                     recentCol->ChangeVelocity();
+                    recentCol->ChangeAngle();
                     continue;
                 }
+            }
+
+            float angleZ2 = 0.0f;
+            if (auto enemyRef = static_cast<RE::TESObjectREFR*>(actorNPC); enemyRef) {
+                angleZ2 = enemyRef->GetAngleZ();
+                log::trace("Enemy AngleZ: {}", angleZ2);
             }
             // TODO: Check if NPC is enemy
             
 
             // TODO: consider make it that even if NPC is not attacking, still enable collision
-            // Check if NPC is attacking, which hand.
-            // 
+
             // TODO: how to see if NPC is using both two weapons? Flags kRotatingAttack isn't for this
             //      Also, 44313 has an attack move that scissors the player with two hands, it's right hand and no flag can detect it
+            
+
+            // Check if NPC is attacking, which hand.
             bool isLeftAttack;
             bool isPowerAttack;
             if (!actorNPC->AsActorState()) {
@@ -155,7 +166,6 @@ void ZacOnFrame::CollisionDetection() {
                 log::trace("NPC bash attack. Can't parry");
                 continue;
             }
-            // TODO: handle dual wield triple attack.
             isLeftAttack = attackerAI->high->attackData->IsLeftAttack();
             isPowerAttack = attackerAI->high->attackData->data.flags.any(RE::AttackData::AttackFlag::kPowerAttack);
 
@@ -171,7 +181,6 @@ void ZacOnFrame::CollisionDetection() {
             // For now, we check both the collision between any weapon regardlessly 
             //      (enemy's L and player's L and R, and enemy's R and player's L and R)
 
-            // TODO: make Dist also return the point of collision, so we show spark on that point
             RE::NiPoint3 contactPos; // approximately where collision happens
             auto dis_playerL_enemyL =
                 OnMeleeHit::Dist(posWeaponBottomL, posWeaponTopL, posNPCWeaponBottomL, posNPCWeaponTopL);
@@ -184,13 +193,16 @@ void ZacOnFrame::CollisionDetection() {
 
             bool isCollision = false;
             bool isEnemyLeft = false;
+            bool isPlayerLeft = false;
             ;
             if (dis_playerL_enemyL.dist < fCollisionDistThres) {
                 isCollision = true;
                 isEnemyLeft = true;
+                isPlayerLeft = true;
                 contactPos = dis_playerL_enemyL.contactPoint;
             } else if (dis_playerL_enemyR.dist < fCollisionDistThres) {
                 isCollision = true;
+                isPlayerLeft = true;
                 contactPos = dis_playerL_enemyR.contactPoint;
             } else if (dis_playerR_enemyL.dist < fCollisionDistThres) {
                 isCollision = true;
@@ -201,12 +213,27 @@ void ZacOnFrame::CollisionDetection() {
                 contactPos = dis_playerR_enemyR.contactPoint;
             } 
             if (isCollision) {
-                auto col = Collision(actorNPC, iFrameCount,
-                                     CalculatePushVector(playerActor->GetPosition(), actorNPC->GetPosition(), true));
+                // create a new collision
+
+                // push the enemy away by this velocity. Will be used for the next few frames
+                RE::hkVector4 pushVelocity =
+                    CalculatePushVector(playerActor->GetPosition(), actorNPC->GetPosition(), true);
+
+                // get the angle of enemy. Will be used for the next few frames
+                float angleZ = 0.0f;
+                if (auto enemyRef = static_cast<RE::TESObjectREFR*>(actorNPC); enemyRef) {
+                    angleZ = enemyRef->GetAngleZ();
+                }
+                RE::NiPoint3 playerWeapSpeed = speedBuf.GetVelocity(5, isPlayerLeft);
+                bool isRotClockwise = ShouldRotateClockwise(playerActor->GetPosition(), actorNPC->GetPosition(), playerWeapSpeed);
+                int64_t rotDurationFrame = RotateFrame(playerWeapSpeed.SqrLength());
+
+                auto col = Collision(actorNPC, iFrameCount, actorNPC->GetPosition(), pushVelocity, angleZ,
+                                     isRotClockwise, rotDurationFrame);
                 log::trace("Collision with {} on frame {}", col.getEnemy()->GetBaseObject()->GetName(),
                            col.getFrame());
                 colBuffer.PushCopy(col);
-                CollisionEffect(playerActor, actorNPC, contactPos, isEnemyLeft);
+                CollisionEffect(playerActor, actorNPC, contactPos, isEnemyLeft, isPlayerLeft);
             }
         }
     }
@@ -218,7 +245,7 @@ void ZacOnFrame::CollisionDetection() {
     // Create collision data
 }
 
-void ZacOnFrame::CollisionEffect(RE::Actor* playerActor, RE::Actor* enemyActor, RE::NiPoint3 contactPos, bool isEnemyLeft) {
+void ZacOnFrame::CollisionEffect(RE::Actor* playerActor, RE::Actor* enemyActor, RE::NiPoint3 contactPos, bool isEnemyLeft, bool isPlayerLeft) {
     const auto nodeName = isEnemyLeft?
         "SHIELD"sv: "WEAPON"sv;
     auto root = netimmerse_cast<RE::BSFadeNode*>(enemyActor->Get3D());
@@ -227,26 +254,141 @@ void ZacOnFrame::CollisionEffect(RE::Actor* playerActor, RE::Actor* enemyActor, 
     if (!bone) return;
     const auto nodeNameFoot = "NPC L Toe0 [LToe]"sv;
     auto boneFoot = netimmerse_cast<RE::NiNode*>(root->GetObjectByName(nodeNameFoot));
-    if (!boneFoot) return;
     // Display spark and sound
     SKSE::GetTaskInterface()->AddTask([enemyActor, contactPos, bone, boneFoot]() {
         RE::NiPoint3 contact = contactPos;
         RE::NiPoint3 P_V = {0.0f, 0.0f, 0.0f};
-        RE::NiPoint3 foot = boneFoot->world.translate;
         OnMeleeHit::play_sound(enemyActor, 0x0003C73C);
         // Display spark on enemy's weapon, at the collision point
         OnMeleeHit::play_impact_2(enemyActor, RE::TESForm::LookupByID<RE::BGSImpactData>(0x0004BB54), &P_V, &contact,
                                   bone);
+
+        if (!boneFoot) return;
         // Display dust under enemy's foot
+        RE::NiPoint3 foot = boneFoot->world.translate;
         // 13CBA, WPNBlade1HandVsDirtImpact; 
         OnMeleeHit::play_impact_2(enemyActor, RE::TESForm::LookupByID<RE::BGSImpactData>(0x00013CBA), &P_V, &foot,
                                   boneFoot);
     });
 
+    // if enemy is power attacking, double sta cost to player
+    bool isEnemyPower = false;
+    if (auto enemyAI = enemyActor->GetActorRuntimeData().currentProcess; enemyAI) {
+        if (enemyAI->high && enemyAI->high->attackData &&
+            enemyAI->high->attackData->data.flags.any(RE::AttackData::AttackFlag::kPowerAttack)) {
+            isEnemyPower = true;
+            log::trace("Enemy is power attacking!");
+        }
+    }
+    // if player is power attacking, double sta cost to player
+    bool isPlayerPower = false;
+    if (auto playerAI = playerActor->GetActorRuntimeData().currentProcess; playerAI) {
+        if (playerAI->high && playerAI->high->attackData &&
+            playerAI->high->attackData->data.flags.any(RE::AttackData::AttackFlag::kPowerAttack)) {
+            isPlayerPower = true;
+            log::trace("Player is power attacking!");
+        }
+    }
 
-    //enemyActor->NotifyAnimationGraph("recoilStop");
-    //enemyActor->NotifyAnimationGraph("AttackStop");
-    //enemyActor->NotifyAnimationGraph("recoilLargeStart"); //Collision_Recoil
+    // enemy stamina cost and may recoil
+    auto enemyCurSta = enemyActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kStamina);
+    uint16_t playerDamage(5), enemyDamage(5); // 5 for unhanded
+    if (playerActor->GetEquippedObject(isPlayerLeft)) {
+        if (auto weap = playerActor->GetEquippedObject(isPlayerLeft)->As<RE::TESObjectWEAP>(); weap) {
+            playerDamage = weap->attackDamage > playerDamage ? weap->attackDamage: playerDamage;
+            // TODO: multiply player's skill
+        }
+    }
+    if (enemyActor->GetEquippedObject(isEnemyLeft)) {
+        if (auto weap = enemyActor->GetEquippedObject(isEnemyLeft)->As<RE::TESObjectWEAP>(); weap) {
+            enemyDamage = weap->attackDamage > enemyDamage ? weap->attackDamage : enemyDamage;
+        }
+    }
+    float enemyStaCost = fEnemyStaCostWeapMulti * (float) ( 1.5 * playerDamage - enemyDamage);
+    enemyStaCost = enemyStaCost < fEnemyStaCostMin ? fEnemyStaCostMin : enemyStaCost;
+    enemyStaCost = enemyStaCost > fEnemyStaCostMax ? fEnemyStaCostMax : enemyStaCost;
+    if (isPlayerPower && !isEnemyPower) {
+        enemyStaCost *= 2;
+    }
+    float enemyFinalSta = enemyCurSta - enemyStaCost;
+    if (enemyFinalSta < 0.0f) {
+        enemyFinalSta = 0.0f;
+    }
+    enemyStaCost = enemyCurSta - enemyFinalSta;
+    enemyActor->AsActorValueOwner()->RestoreActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage, RE::ActorValue::kStamina,
+                                                       -enemyStaCost);
+
+    log::trace("Player damage: {}. Enemy cur sta:{}. cost:{}. final:{}", playerDamage, enemyCurSta,
+               enemyStaCost, enemyFinalSta);
+    log::trace("Enemy perm sta:{}", enemyActor->AsActorValueOwner()->GetPermanentActorValue(RE::ActorValue::kStamina));
+    // Enemy recoil
+    if (isPlayerPower || enemyFinalSta <
+        fEnemyStaLargeRecoilThresPer *
+                            enemyActor->AsActorValueOwner()->GetPermanentActorValue(RE::ActorValue::kStamina)) {
+         enemyActor->NotifyAnimationGraph("recoilStop");
+         enemyActor->NotifyAnimationGraph("AttackStop");
+         enemyActor->NotifyAnimationGraph("recoilLargeStart");
+    } else if (enemyFinalSta < fEnemyStaStopThresPer *
+                                   enemyActor->AsActorValueOwner()->GetPermanentActorValue(RE::ActorValue::kStamina)) {
+            enemyActor->NotifyAnimationGraph("recoilStop");
+            enemyActor->NotifyAnimationGraph("AttackStop");
+    }
+
+    // Player stamina cost
+    auto playerCurSta = playerActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kStamina);
+    float playerStaCost = fPlayerStaCostWeapMulti * (float)(1.5 * enemyDamage - playerDamage);
+    playerStaCost = playerStaCost < fPlayerStaCostMin ? fPlayerStaCostMin : playerStaCost;
+    playerStaCost = playerStaCost > fPlayerStaCostMax ? fPlayerStaCostMax : playerStaCost;
+    if (isEnemyPower && !isPlayerPower) playerStaCost *= 2;
+    float playerFinalSta = playerCurSta - playerStaCost;
+    if (playerFinalSta < 0.0f) {
+            playerFinalSta = 0.0f;
+    }
+    playerStaCost = playerCurSta - playerFinalSta;
+    // if player is moving their weapon, reduce stamina cost
+    auto speed = speedBuf.GetVelocity(5, isPlayerLeft).SqrLength();
+    log::trace("Player moving their weapon at speed:{}, higher than thres1:{}, higher than thres2:{}", speed,
+               speed > fPlayerWeaponSpeedRewardThres, speed > fPlayerWeaponSpeedRewardThres2);
+    if (speed > fPlayerWeaponSpeedRewardThres) {
+        playerStaCost *= fPlayerWeaponSpeedReward;
+    } else if (speed > fPlayerWeaponSpeedRewardThres2) {
+            playerStaCost *= fPlayerWeaponSpeedReward2;
+    } 
+    playerActor->AsActorValueOwner()->RestoreActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage, RE::ActorValue::kStamina,
+                                                        -playerStaCost);
+    log::trace("Enemy damage: {}. player cur sta:{}. cost:{}. final:{}", enemyDamage, playerCurSta, playerStaCost,
+               playerFinalSta);
+
+    // Haptic vibration on controller, based on playerStaCost
+    auto papyrusVM = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+    if (papyrusVM) {
+        int hapticFrame = (int)(playerStaCost * fHapticMulti);
+        hapticFrame = hapticFrame < iHapticStrMin ? iHapticStrMin : hapticFrame;
+        hapticFrame = hapticFrame > iHapticStrMax ? iHapticStrMax : hapticFrame;
+
+        log::trace("Preparing arguments");
+        RE::BSScript::IFunctionArguments* hapticArgs;
+        if (isPlayerLeft) {
+            hapticArgs = RE::MakeFunctionArguments(true, (int)hapticFrame, (int)iHapticLengthMicroSec);
+        } else {
+            hapticArgs = RE::MakeFunctionArguments(false, (int)hapticFrame, (int)iHapticLengthMicroSec);
+        }
+        
+        RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> callback;
+       
+        if (papyrusVM->TypeIsValid("VRIK"sv)) {
+            log::trace("Calling papyrus");
+            // Function VrikHapticPulse(Bool onLeftHand, Int frames, Int microsec) native global
+            papyrusVM->DispatchStaticCall("VRIK"sv, "VrikHapticPulse"sv, hapticArgs, callback);
+            log::trace("Finished calling papyrus");
+        } else {
+            log::error("VRIK not installed");
+        }
+    } 
+        
+    
+
+    // TODO: adv block and weapon skill
 }
 
 
@@ -257,14 +399,6 @@ void debug_show_weapon_range(RE::Actor* actor, RE::NiPoint3& posWeaponBottom, RE
     OnMeleeHit::play_impact_2(actor, RE::TESForm::LookupByID<RE::BGSImpactData>(0x0004BB54), &P_V, &posWeaponBottom, bone);
 }
 
-// A hacky way to avoid a bug when both player and enemy are using two-handed weapons
-// The bug was, their left hands are set to (0,0,0), so they collide :D
-//void SetNiPointSpecial(RE::NiPoint3& pos) {
-//    pos.x = 9999.0f;
-//    pos.y = 9999.0f;
-//    pos.z = 9999.0f;
-//    return;
-//}
 
 // This function modifies the 4 NiPoint3 passed in. If failed to get the 3D of actor, it return false.
 // Otherwise, it returns true, even if some NiPoint3 are not modified. 
@@ -313,7 +447,6 @@ bool ZacOnFrame::FrameGetWeaponPos(RE::Actor* actor, RE::NiPoint3& posWeaponBott
         }
     } else {
         // fist
-        isEquipR = true;
         isFistR = true;
     }
     if (auto equipL = actor->GetEquippedObject(true); equipL) {
@@ -352,11 +485,10 @@ bool ZacOnFrame::FrameGetWeaponPos(RE::Actor* actor, RE::NiPoint3& posWeaponBott
         }
     } else {
         // fist
-        isEquipL = true;
         isFistL = true;
     }
 
-    if (weaponL && isEquipL) {
+    if (weaponL && (isEquipL || (isFistL && isFistR))) { // only enable fist collision when both hands are fist
         float reachL(0.0f), handleL(0.0f);
         if (isFistL) { 
             reachL = 10.0f;
@@ -402,7 +534,7 @@ bool ZacOnFrame::FrameGetWeaponPos(RE::Actor* actor, RE::NiPoint3& posWeaponBott
         
     }
     
-    if (weaponR && isEquipR) {
+    if (weaponR && (isEquipR || (isFistL && isFistR))) {
         float reachR(0.0f), handleR(0.0f);
         if (isFistR) {
             reachR = 10.0f;
@@ -455,11 +587,10 @@ RE::hkVector4 ZacOnFrame::CalculatePushVector(RE::NiPoint3 sourcePos, RE::NiPoin
     RE::NiPoint3 pushDirection = targetPos - sourcePos;
     // Normalize the direction
     float length =
-        sqrt(pushDirection.x * pushDirection.x + pushDirection.y * pushDirection.y + pushDirection.z * pushDirection.z);
+        sqrt(pushDirection.x * pushDirection.x + pushDirection.y * pushDirection.y);
     if (length > 0.0f) {  // avoid division by zero
         pushDirection.x /= length;
         pushDirection.y /= length;
-        pushDirection.z /= length;
     }
     float pushMulti = isEnemy ? fEnemyPushMulti : fPlayerPushMulti;
     return RE::hkVector4(pushDirection.x * pushMulti, pushDirection.y * pushMulti, 0.0f, 0.0f);

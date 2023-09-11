@@ -109,19 +109,6 @@ namespace OnMeleeHit {
         }
     };
 
-    // Below here some helper functions
-    bool AttackerBeatsParry(RE::Actor* attacker, RE::Actor* target, const RE::TESObjectWEAP* attackerWeapon,
-                            const RE::TESObjectWEAP* targetWeapon, RE::AIProcess* const attackerAI,
-                            RE::AIProcess* const targetAI);
-    double GetScore(RE::Actor* actor, const RE::TESObjectWEAP* weapon,
-                    RE::AIProcess* const actorAI, const Settings::Scores& scoreSettings);
-    const RE::TESObjectWEAP* const GetAttackWeapon(RE::AIProcess* const aiProcess);
-    bool GetWeaponPositions(RE::Actor* actor, RE::AIProcess* const aiProcess, RE::NiPoint3& outFrom,
-                            RE::NiPoint3& outTo);
-    bool IsParry(RE::Actor* hit_causer, RE::Actor* hit_target,
-                 RE::AIProcess* const attackerAI, RE::AIProcess* const targetAI,
-                 const RE::TESObjectWEAP* attackerWeapon, const RE::TESObjectWEAP* targetWeapon);
-    bool IsParryBasicChecks(const RE::Actor* const hit_causer, const RE::Actor* const hit_target);
     bool IsAttacking(const RE::ATTACK_STATE_ENUM state_a);
     DistResult Dist(const RE::NiPoint3& A, const RE::NiPoint3& B, const RE::NiPoint3& C, const RE::NiPoint3& D);
     RE::NiPoint3 Lerp(const RE::NiPoint3& A, const RE::NiPoint3& B, const float k);
