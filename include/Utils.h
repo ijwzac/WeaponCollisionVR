@@ -9,3 +9,9 @@ bool ShouldRotateClockwise(const RE::NiPoint3& colPos, const RE::NiPoint3& enemy
                            const RE::NiPoint3& weaponVelocity);
 
 int64_t RotateFrame(float speed);
+
+bool IsOneHandWeap(RE::Actor*, bool);
+
+bool IsTwoHandWeap(RE::Actor*, bool);
+
+bool IsHandToHand(RE::Actor*, bool);

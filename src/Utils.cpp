@@ -48,3 +48,59 @@ int64_t RotateFrame(float speed) {
         return 5;
     }
 }
+
+bool IsOneHandWeap(RE::Actor* actor, bool isLeft) { 
+    if (auto equip = actor->GetEquippedObject(isLeft)) {
+        if (auto equipWeap = equip->As<RE::TESObjectWEAP>(); equipWeap) {
+            if (equip->IsArmor()) {
+                return false;
+            }
+            if (equipWeap->IsBow()) {
+                return false;
+            } else if (equipWeap->IsTwoHandedSword()) {
+                return false;
+            } else if (equipWeap->IsTwoHandedAxe()) {
+                return false;
+            } else if (equipWeap->HasKeywordString("WeapTypeWarhammer")) {
+                return false;
+            } else if (equipWeap->IsStaff()) {
+                return false;
+            } else {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool IsTwoHandWeap(RE::Actor* actor, bool isLeft) {
+    if (auto equip = actor->GetEquippedObject(isLeft)) {
+        if (auto equipWeap = equip->As<RE::TESObjectWEAP>(); equipWeap) {
+            if (equip->IsArmor()) {
+                return false;
+            }
+            if (equipWeap->IsBow()) {
+                return false;
+            } else if (equipWeap->IsTwoHandedSword()) {
+                return true;
+            } else if (equipWeap->IsTwoHandedAxe()) {
+                return true;
+            } else if (equipWeap->HasKeywordString("WeapTypeWarhammer")) {
+                return true;
+            } else if (equipWeap->IsStaff()) {
+                return false;
+            } else {
+                return false;
+            }
+        }
+    }
+    return false;
+}
+
+bool IsHandToHand(RE::Actor* actor, bool isLeft) {
+    if (auto equip = actor->GetEquippedObject(isLeft)) {
+        return false;
+    } else {
+        return true;
+    }
+}

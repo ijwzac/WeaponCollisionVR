@@ -23,14 +23,17 @@ void ZacOnFrame::InstallFrameHook() {
 }
 
 void ZacOnFrame::OnFrameUpdate() {
-    if (const auto ui{RE::UI::GetSingleton()}) {
-        if (!ui->GameIsPaused()) { // Not in menu, not in load, not in console
-            ZacOnFrame::CollisionDetection();
-            iFrameCount++;
-        } else {
-            //log::trace("Game paused, don't record collision");
+    if (bEnableWholeMod) {
+        if (const auto ui{RE::UI::GetSingleton()}) {
+            if (!ui->GameIsPaused()) {  // Not in menu, not in load, not in console
+                ZacOnFrame::CollisionDetection();
+                iFrameCount++;
+            } else {
+                // log::trace("Game paused, don't record collision");
+            }
         }
     }
+    
     
     ZacOnFrame::_OnFrame();  // TODO: figure out why the game works fine without this line
                  // Anyway, we should always call it
@@ -291,17 +294,51 @@ void ZacOnFrame::CollisionEffect(RE::Actor* playerActor, RE::Actor* enemyActor, 
     }
 
     // enemy stamina cost and may recoil
+    if (!enemyActor->AsActorValueOwner()) {
+        log::error("Enemy doesn't have actorvalueowner:{}", enemyActor->GetDisplayFullName());
+        return;
+    } else if (!playerActor->AsActorValueOwner()) {
+        log::error("Player doesn't have actorvalueowner:{}", playerActor->GetDisplayFullName());
+        return;
+    } 
     auto enemyCurSta = enemyActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kStamina);
     uint16_t playerDamage(5), enemyDamage(5); // 5 for unhanded
     if (playerActor->GetEquippedObject(isPlayerLeft)) {
         if (auto weap = playerActor->GetEquippedObject(isPlayerLeft)->As<RE::TESObjectWEAP>(); weap) {
             playerDamage = weap->attackDamage > playerDamage ? weap->attackDamage: playerDamage;
-            // TODO: multiply player's skill
+            auto oriDmg = playerDamage;
+            if (IsOneHandWeap(playerActor, isPlayerLeft))
+                playerDamage =
+                    (uint16_t)((float)playerDamage *
+                               (1.0f + playerActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kOneHanded) / 100.0f));
+            else if (IsTwoHandWeap(playerActor, isPlayerLeft))
+                playerDamage =
+                    (uint16_t)((float)playerDamage *
+                               (1.0f +
+                                playerActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kTwoHanded) / 100.0f));
+            else if (bHandToHandLoad && IsHandToHand(playerActor, isPlayerLeft))
+                playerDamage =
+                    (uint16_t)((float)playerDamage *
+                               (1.0f +
+                                playerActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kLockpicking) / 100.0f));
+            log::trace("Player damage: {}. Ori damage: {}", playerDamage, oriDmg);
         }
     }
     if (enemyActor->GetEquippedObject(isEnemyLeft)) {
         if (auto weap = enemyActor->GetEquippedObject(isEnemyLeft)->As<RE::TESObjectWEAP>(); weap) {
             enemyDamage = weap->attackDamage > enemyDamage ? weap->attackDamage : enemyDamage;
+            auto oriDmg = enemyDamage;
+            if (IsOneHandWeap(enemyActor, isEnemyLeft))
+                enemyDamage =
+                    (uint16_t)((float)enemyDamage *
+                               (1.0f +
+                                enemyActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kOneHanded) / 100.0f));
+            else if (IsTwoHandWeap(enemyActor, isEnemyLeft))
+                enemyDamage =
+                    (uint16_t)((float)enemyDamage *
+                               (1.0f +
+                                enemyActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kTwoHanded) / 100.0f));
+            log::trace("Enemy damage: {}. Ori damage: {}", enemyDamage, oriDmg);
         }
     }
     float enemyStaCost = fEnemyStaCostWeapMulti * (float) ( 1.5 * playerDamage - enemyDamage);
@@ -388,7 +425,17 @@ void ZacOnFrame::CollisionEffect(RE::Actor* playerActor, RE::Actor* enemyActor, 
         
     
 
-    // TODO: adv block and weapon skill
+    // adv block and weapon skill
+    auto playerAA = RE::PlayerCharacter::GetSingleton();
+    if (playerAA) {
+        playerAA->AddSkillExperience(RE::ActorValue::kBlock, fExpBlock);
+        if (IsOneHandWeap(playerActor, isPlayerLeft))
+            playerAA->AddSkillExperience(RE::ActorValue::kOneHanded, fExpOneHand);
+        else if (IsTwoHandWeap(playerActor, isPlayerLeft))
+            playerAA->AddSkillExperience(RE::ActorValue::kTwoHanded, fExpTwoHand);
+        else if (bHandToHandLoad && IsHandToHand(playerActor, isPlayerLeft))
+            playerAA->AddSkillExperience(RE::ActorValue::kLockpicking, fExpHandToHand);
+    }
 }
 
 

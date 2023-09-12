@@ -1,8 +1,10 @@
 #pragma once
 
 // Global
+extern bool bEnableWholeMod;
 extern int64_t iFrameCount;
 //extern RE::BSScript::IVirtualMachine* papyrusVM;
+extern bool bHandToHandLoad;
 
 // Debug
 extern int globalInputCounter;
@@ -45,6 +47,10 @@ extern int iHapticStrMin;
 extern int iHapticStrMax;
 extern float fHapticMulti; // same logic above. Haptic decided by stamina cost
 extern int iHapticLengthMicroSec; 
+extern float fExpBlock; // Exp obtained for every collision
+extern float fExpOneHand;
+extern float fExpTwoHand;
+extern float fExpHandToHand;
 
 // onMeleeHit settings
 extern int64_t collisionEffectDurEnemyShort; // after a collision, within this number of frames, a hit event must be affected
@@ -96,50 +102,14 @@ public:
 
     void Load();
 
-    struct Core {
+    struct Main {
         void Load(CSimpleIniA& a_ini);
 
-        bool useScoreSystem{true};
-    } core;
+    } sMain;
 
     struct Scores {
         void Load(CSimpleIniA& a_ini);
 
-        double scoreDiffThreshold{20.0};
-        
-        double weaponSkillWeight{1.0};
-
-        double oneHandDaggerScore{0.0};
-        double oneHandSwordScore{20.0};
-        double oneHandAxeScore{25.0};
-        double oneHandMaceScore{25.0};
-        double oneHandKatanaScore{30.0};
-        double oneHandRapierScore{15.0};
-        double oneHandClawsScore{10.0};
-        double oneHandWhipScore{-100.0};
-        double twoHandSwordScore{40.0};
-        double twoHandAxeScore{50.0};
-        double twoHandWarhammerScore{50.0};
-        double twoHandPikeScore{30.0};
-        double twoHandHalberdScore{45.0};
-        double twoHandQuarterstaffScore{50.0};
-
-        double altmerScore{-15.0};
-        double argonianScore{0.0};
-        double bosmerScore{-10.0};
-        double bretonScore{-10.0};
-        double dunmerScore{-5.0};
-        double imperialScore{0.0};
-        double khajiitScore{5.0};
-        double nordScore{10.0};
-        double orcScore{20.0};
-        double redguardScore{10.0};
-
-        double femaleScore{-10.0};
-
-        double powerAttackScore{25.0};
-
-        double playerScore{0.0};
     } scores;
 
 private:
@@ -181,4 +151,37 @@ private:
             return a_value;
         }
     };
+};
+
+// Code from: https://www.youtube.com/watch?v=afGRuSM2IIc
+class EventProcessor : public RE::BSTEventSink<RE::MenuOpenCloseEvent> {
+    // Pretty typical singleton setup
+    // *Private* constructor/destructor
+    // And we *delete* the copy constructors and move constructors.
+    EventProcessor() = default;
+    ~EventProcessor() = default;
+    EventProcessor(const EventProcessor&) = delete;
+    EventProcessor(EventProcessor&&) = delete;
+    EventProcessor& operator=(const EventProcessor&) = delete;
+    EventProcessor& operator=(EventProcessor&&) = delete;
+
+public:
+    // Returns a reference to the one and only instance of EventProcessor :)
+    //
+    // Note: this is returned as a & reference. When you need this as a pointer, you'll want to use & (see below)
+    static EventProcessor& GetSingleton() {
+        static EventProcessor singleton;
+        return singleton;
+    }
+
+    // Log information about Menu open/close events that happen in the game
+    RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* event,
+                                          RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override {
+        logger::trace("Menu {} Open? {}", event->menuName, event->opening); 
+        if (event->menuName == "Console"sv && event->opening == false) {
+            logger::trace("Console close. Now reload config"); 
+            Settings::GetSingleton()->Load();
+        }
+        return RE::BSEventNotifyControl::kContinue;
+    }
 };

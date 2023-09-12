@@ -30,20 +30,24 @@ void OnMeleeHitHook::InstallHook() {
 
 void OnMeleeHitHook::OnMeleeHit(RE::Actor* hit_causer, RE::Actor* hit_target, std::int64_t a_int1, bool a_bool,
                                 void* a_unkptr) {
-    auto playerAA = RE::PlayerCharacter::GetSingleton();
-    if (playerAA) {
-        auto playerActor = static_cast<RE::Actor*>(playerAA);
-        if (playerActor) {
-            if (hit_target == playerActor) {
-                log::trace("Delay a hit");
-                // If hitting the player, we record everything we need to call the vanilla _OnMeleeHit, and call it a
-                // few frames later
-                auto h = OriMeleeHit(iFrameCount + iDelayEnemyHit, hit_causer, hit_target, a_int1, a_bool, a_unkptr);
-                meleeQueue.PushCopy(h);
-                return;
-            }            
+    if (bEnableWholeMod) {
+        auto playerAA = RE::PlayerCharacter::GetSingleton();
+        if (playerAA) {
+            auto playerActor = static_cast<RE::Actor*>(playerAA);
+            if (playerActor) {
+                if (hit_target == playerActor) {
+                    log::trace("Delay a hit");
+                    // If hitting the player, we record everything we need to call the vanilla _OnMeleeHit, and call it
+                    // a few frames later
+                    auto h =
+                        OriMeleeHit(iFrameCount + iDelayEnemyHit, hit_causer, hit_target, a_int1, a_bool, a_unkptr);
+                    meleeQueue.PushCopy(h);
+                    return;
+                }
+            }
         }
     }
+    
 
     // Call the normal game's code
     _OnMeleeHit(hit_causer, hit_target, a_int1, a_bool, a_unkptr);

@@ -1,5 +1,51 @@
 #include "Settings.h"
 
+// Global
+bool bEnableWholeMod = true;
+int globalInputCounter = 0;
+bool bHandToHandLoad = false;
+float fRangeMulti = 1.0f;
+float fCollisionDistThres = 10.0f;
+float fDetectEnemy = 600.f;
+bool bShowWeaponSegment = true;
+int64_t iFrameCount = 0;
+
+// Enemy
+float fEnemyPushMulti = 750.0f;
+float fEnemyPushMaxDist = 30.0f;
+float fEnemyRotStep = 0.15f;
+float fEnemyStaCostMin = 10.0f;
+float fEnemyStaCostMax = 60.0f;
+float fEnemyStaCostWeapMulti = 1.0f;
+float fEnemyStaStopThresPer = 0.3f;
+float fEnemyStaLargeRecoilThresPer = 0.05f;
+
+// Player
+float fPlayerPushMulti = 0.0f;
+float fPlayerStaCostMin = 6.0f;
+float fPlayerStaCostMax = 50.0f;
+float fPlayerStaCostWeapMulti = 1.0f;
+float fPlayerWeaponSpeedRewardThres = 150.0f;
+float fPlayerWeaponSpeedReward = 0.25f;
+float fPlayerWeaponSpeedRewardThres2 = 30.0f;
+float fPlayerWeaponSpeedReward2 = 0.5f;
+int iHapticStrMin = 10;
+int iHapticStrMax = 50;
+float fHapticMulti = 1.0f;
+int iHapticLengthMicroSec = 100000;  // 100 ms
+float fExpBlock = 3.0f; // At level 20, block needs [86] exp to reach 21. The number 86 increases non-linearly as the skill levels up
+float fExpOneHand = 2.0f; // At level 20, one-handed needs [110] exp to reach 21.
+float fExpTwoHand = 3.0f; // [179]
+float fExpHandToHand = 1.0f; // [7]
+
+int64_t collisionIgnoreDur = 30;
+int64_t collisionEffectDurEnemyShort = 30;  // Within 30 frames, any attack from the enemy is nullified
+int64_t collisionEffectDurEnemyLong =
+    90;  // Within 90 frames, only the first attack from enemy will be nullified
+         // Is there any attack animation whose start and hit will be longer than 90 frames?
+int64_t iDelayEnemyHit = 6;
+
+
 Settings* Settings::GetSingleton() {
     static Settings singleton;
     return std::addressof(singleton);
@@ -13,83 +59,28 @@ void Settings::Load() {
 
     ini.LoadFile(path);
 
-    core.Load(ini);
+    sMain.Load(ini);
     scores.Load(ini);
 
     ini.SaveFile(path);
 }
 
-void Settings::Core::Load(CSimpleIniA& a_ini) { 
-    static const char* section = "Core";
+void Settings::Main::Load(CSimpleIniA& a_ini) { 
+    static const char* section = "Main";
 
-    detail::get_value(a_ini, useScoreSystem, section, "UseScoreSystem",
-                      ";Use the score-based system to allow certain attacks to go through and ignore parries.");
+    detail::get_value(
+        a_ini, bEnableWholeMod, section, "EnableWholeMod",
+        "=====While playing game, you can also change any setting below. Steps:\n"
+        "(1) Edit settings; (2) Save and close file; (3) Open Skyrim console by \"`\";\n"
+        "(4) Close the console, no need to type anything; (5) Now settings are updated.\n=====\n\n"
+        "; Set this to false if you want to completely disable this mod. Default:\"true\".");
 }
 
 void Settings::Scores::Load(CSimpleIniA& a_ini) {
     static const char* section = "Scores";
 
-    detail::get_value(a_ini, scoreDiffThreshold, section, "ScoreDiffThreshold",
-                      ";If the difference in scores is at least equal to this threshold, attacks are not parried.");
 
-    detail::get_value(a_ini, weaponSkillWeight, section, "WeaponSkillWeight",
-                      ";Weapon Skill is multiplied by this weight and then added to the score.");
-
-    detail::get_value(a_ini, oneHandDaggerScore, section, "OneHandDaggerScore",
-                      ";Bonus score for attacks with daggers.");
-    detail::get_value(a_ini, oneHandSwordScore, section, "OneHandSwordScore",
-                      ";Bonus score for attacks with one-handed swords.");
-    detail::get_value(a_ini, oneHandAxeScore, section, "OneHandAxeScore",
-                      ";Bonus score for attacks with one-handed axes.");
-    detail::get_value(a_ini, oneHandMaceScore, section, "OneHandMaceScore",
-                      ";Bonus score for attacks with one-handed maces.");
-    detail::get_value(a_ini, oneHandKatanaScore, section, "OneHandKatanaScore",
-                      ";Bonus score for attacks with katanas (from Animated Armoury).");
-    detail::get_value(a_ini, oneHandRapierScore, section, "OneHandRapierScore",
-                      ";Bonus score for attacks with rapiers (from Animated Armoury).");
-    detail::get_value(a_ini, oneHandClawsScore, section, "OneHandClawsScore",
-                      ";Bonus score for attacks with claws (from Animated Armoury).");
-    detail::get_value(a_ini, oneHandWhipScore, section, "OneHandWhipScore",
-                      ";Bonus score for attacks with whips (from Animated Armoury).");
-    detail::get_value(a_ini, twoHandSwordScore, section, "TwoHandSwordScore",
-                      ";Bonus score for attacks with two-handed swords.");
-    detail::get_value(a_ini, twoHandAxeScore, section, "TwoHandAxeScore",
-                      ";Bonus score for attacks with two-handed axes.");
-    detail::get_value(a_ini, twoHandWarhammerScore, section, "TwoHandWarhammerScore",
-                      ";Bonus score for attacks with two-handed warhammers.");
-    detail::get_value(a_ini, twoHandPikeScore, section, "TwoHandPikeScore",
-                      ";Bonus score for attacks with two-handed pikes (from Animated Armoury).");
-    detail::get_value(a_ini, twoHandHalberdScore, section, "TwoHandHalberdScore",
-                      ";Bonus score for attacks with two-handed halberds (from Animated Armoury).");
-    detail::get_value(a_ini, twoHandQuarterstaffScore, section, "TwoHandQuarterstaffScore",
-                      ";Bonus score for attacks with two-handed quarterstaffs (from Animated Armoury).");
-
-    detail::get_value(a_ini, altmerScore, section, "AltmerScore",
-                      ";Bonus score for Altmer.");
-    detail::get_value(a_ini, argonianScore, section, "ArgonianScore",
-                      ";Bonus score for Argonians.");
-    detail::get_value(a_ini, bosmerScore, section, "BosmerScore",
-                      ";Bonus score for Bosmer.");
-    detail::get_value(a_ini, bretonScore, section, "BretonScore", 
-                      ";Bonus score for Bretons.");
-    detail::get_value(a_ini, dunmerScore, section, "DunmerScore",
-                      ";Bonus score for Dunmer.");
-    detail::get_value(a_ini, imperialScore, section, "ImperialScore",
-                      ";Bonus score for Imperials.");
-    detail::get_value(a_ini, khajiitScore, section, "KhajiitScore",
-                      ";Bonus score for Khajiit.");
-    detail::get_value(a_ini, nordScore, section, "NordScore",
-                      ";Bonus score for Nords.");
-    detail::get_value(a_ini, orcScore, section, "OrcScore",
-                      ";Bonus score for Orcs.");
-    detail::get_value(a_ini, redguardScore, section, "RedguardScore",
-                      ";Bonus score for Redguard.");
-
-    detail::get_value(a_ini, femaleScore, section, "FemaleScore",
-                      ";Bonus score for female characters.");
-
-    detail::get_value(a_ini, powerAttackScore, section, "PowerAttackScore",
-                      ";Bonus score for power attacks.");
-
-    detail::get_value(a_ini, playerScore, section, "PlayerScore", ";Bonus score for the Player.");
+    detail::get_value(
+        a_ini, collisionIgnoreDur, section, "collisionIgnoreDur",
+        "; After a collision, for how many frames should we ignore following collisions of the same enemy. Default:\"30\"");
 }

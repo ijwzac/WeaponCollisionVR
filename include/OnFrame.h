@@ -258,5 +258,7 @@ namespace ZacOnFrame {
     extern SpeedRing speedBuf;
 
     RE::hkVector4 CalculatePushVector(RE::NiPoint3 sourcePos, RE::NiPoint3 targetPos, bool isEnemy);
+
+
 }
 
