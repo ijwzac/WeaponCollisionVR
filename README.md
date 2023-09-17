@@ -3,9 +3,9 @@ Pseudo Physical Weapon Collision and Parry AE SE VR
 https://www.nexusmods.com/skyrimspecialedition/mods/100781
 
 ## What may be interesting in this project, to mod authors
-How to get the position and (kinda) retotion of weapons
-How to hook to melee hit event
-How to hook to every frame
+- How to get the position and (kinda) retotion of weapons
+- How to hook to melee hit event
+- How to hook to every frame
 
 
 ## TODO
