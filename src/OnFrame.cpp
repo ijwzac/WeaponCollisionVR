@@ -101,6 +101,19 @@ void ZacOnFrame::CollisionDetection() {
     speedBuf.Push(WeaponPos(posWeaponBottomL, posWeaponTopL), true);
     speedBuf.Push(WeaponPos(posWeaponBottomR, posWeaponTopR), false);
 
+    // If bPlayerMustBeAttacking is true, which is default true for SE/AE, and default false for VR
+    // Then we return here, because player must be attacking to parry
+    if (bPlayerMustBeAttacking) {
+        if (!playerActor->AsActorState()) {
+            log::warn("Fail to get ActorState for player");
+            return;
+        }
+        if (!OnMeleeHit::IsAttacking(playerActor->AsActorState()->GetAttackState())) {
+            log::trace("Player not attacking");
+            return;
+        }
+    }
+
 
     // Get nearby enemies
     std::vector<RE::TESObjectREFR*> vNearbyObj;
@@ -153,11 +166,11 @@ void ZacOnFrame::CollisionDetection() {
             bool isLeftAttack;
             bool isPowerAttack;
             if (!actorNPC->AsActorState()) {
-                log::warn("Fail to get ActorState");
+                log::warn("Fail to get ActorState for NPC");
                 continue;
             }
             if (!OnMeleeHit::IsAttacking(actorNPC->AsActorState()->GetAttackState())) {
-                //log::trace("NPC not attacking");
+                log::trace("NPC not attacking");
                 continue;
             }
             RE::AIProcess* const attackerAI = actorNPC->GetActorRuntimeData().currentProcess;
@@ -236,6 +249,11 @@ void ZacOnFrame::CollisionDetection() {
                 log::trace("Collision with {} on frame {}", col.getEnemy()->GetBaseObject()->GetName(),
                            col.getFrame());
                 colBuffer.PushCopy(col);
+
+                // Also update iFrameLastCollision, used to prevent player's hit
+                iFrameLastCollision = iFrameCount;
+
+                // Collision effects
                 CollisionEffect(playerActor, actorNPC, contactPos, isEnemyLeft, isPlayerLeft);
             }
         }
@@ -342,11 +360,11 @@ void ZacOnFrame::CollisionEffect(RE::Actor* playerActor, RE::Actor* enemyActor, 
         }
     }
     float enemyStaCost = fEnemyStaCostWeapMulti * (float) ( 1.5 * playerDamage - enemyDamage);
-    enemyStaCost = enemyStaCost < fEnemyStaCostMin ? fEnemyStaCostMin : enemyStaCost;
-    enemyStaCost = enemyStaCost > fEnemyStaCostMax ? fEnemyStaCostMax : enemyStaCost;
     if (isPlayerPower && !isEnemyPower) {
         enemyStaCost *= 2;
     }
+    enemyStaCost = enemyStaCost < fEnemyStaCostMin ? fEnemyStaCostMin : enemyStaCost;
+    enemyStaCost = enemyStaCost > fEnemyStaCostMax ? fEnemyStaCostMax : enemyStaCost;
     float enemyFinalSta = enemyCurSta - enemyStaCost;
     if (enemyFinalSta < 0.0f) {
         enemyFinalSta = 0.0f;
@@ -374,9 +392,9 @@ void ZacOnFrame::CollisionEffect(RE::Actor* playerActor, RE::Actor* enemyActor, 
     // Player stamina cost
     auto playerCurSta = playerActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kStamina);
     float playerStaCost = fPlayerStaCostWeapMulti * (float)(1.5 * enemyDamage - playerDamage);
+    if (isEnemyPower && !isPlayerPower) playerStaCost *= 2;
     playerStaCost = playerStaCost < fPlayerStaCostMin ? fPlayerStaCostMin : playerStaCost;
     playerStaCost = playerStaCost > fPlayerStaCostMax ? fPlayerStaCostMax : playerStaCost;
-    if (isEnemyPower && !isPlayerPower) playerStaCost *= 2;
     float playerFinalSta = playerCurSta - playerStaCost;
     if (playerFinalSta < 0.0f) {
             playerFinalSta = 0.0f;
@@ -391,10 +409,23 @@ void ZacOnFrame::CollisionEffect(RE::Actor* playerActor, RE::Actor* enemyActor, 
     } else if (speed > fPlayerWeaponSpeedRewardThres2) {
             playerStaCost *= fPlayerWeaponSpeedReward2;
     } 
+    playerFinalSta = playerCurSta - playerStaCost;
     playerActor->AsActorValueOwner()->RestoreActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage, RE::ActorValue::kStamina,
                                                         -playerStaCost);
     log::trace("Enemy damage: {}. player cur sta:{}. cost:{}. final:{}", enemyDamage, playerCurSta, playerStaCost,
                playerFinalSta);
+
+    // Player recoil
+    if (playerFinalSta < fPlayerStaLargeRecoilThresPer *
+                              playerActor->AsActorValueOwner()->GetPermanentActorValue(RE::ActorValue::kStamina)) {
+            playerActor->NotifyAnimationGraph("recoilStop");
+            playerActor->NotifyAnimationGraph("AttackStop");
+            playerActor->NotifyAnimationGraph("recoilLargeStart");
+    } else if (playerFinalSta < fPlayerStaStopThresPer * playerActor->AsActorValueOwner()->GetPermanentActorValue(
+                                                             RE::ActorValue::kStamina)) {
+            playerActor->NotifyAnimationGraph("recoilStop");
+            playerActor->NotifyAnimationGraph("AttackStop");
+    }
 
     // Haptic vibration on controller, based on playerStaCost
     auto papyrusVM = RE::BSScript::Internal::VirtualMachine::GetSingleton();
@@ -419,7 +450,7 @@ void ZacOnFrame::CollisionEffect(RE::Actor* playerActor, RE::Actor* enemyActor, 
             papyrusVM->DispatchStaticCall("VRIK"sv, "VrikHapticPulse"sv, hapticArgs, callback);
             log::trace("Finished calling papyrus");
         } else {
-            log::error("VRIK not installed");
+            log::trace("VRIK not installed");
         }
     } 
         
@@ -547,13 +578,13 @@ bool ZacOnFrame::FrameGetWeaponPos(RE::Actor* actor, RE::NiPoint3& posWeaponBott
             reachL = 20.0f;
             handleL = 10.0f;
         } else if (isSwordL) { // OK
-            reachL = 80.0f;
+            reachL = 90.0f;
             handleL = 12.0f;
         } else if (isAxeL) { // OK
-            reachL = 50.0f;
+            reachL = 60.0f;
             handleL = 12.0f;
         } else if (isMaceL) { // OK
-            reachL = 50.0f;
+            reachL = 60.0f;
             handleL = 12.0f;
         } else if (isStaffL) { // OK
             reachL = 70.0f;
@@ -570,9 +601,10 @@ bool ZacOnFrame::FrameGetWeaponPos(RE::Actor* actor, RE::NiPoint3& posWeaponBott
         posWeaponTopL = posWeaponBottomL + weaponDirectionL * reachL;
         posWeaponBottomL = posWeaponBottomL - weaponDirectionL * handleL;
         
-        //debug_show_weapon_range(actor, posWeaponBottomL, posWeaponTopL, weaponL);
+        if (bShowWeaponSegment) debug_show_weapon_range(actor, posWeaponBottomL, posWeaponTopL, weaponL);
 
     } else {
+        // Animals, dragons will reach here
         log::trace("Doesn't get left weapon. actor:{}", actor->GetBaseObject()->GetName());
         /*if (isPlayer) {
             SetNiPointSpecial(posWeaponBottomL);
@@ -587,7 +619,7 @@ bool ZacOnFrame::FrameGetWeaponPos(RE::Actor* actor, RE::NiPoint3& posWeaponBott
             reachR = 10.0f;
             handleR = 10.0f;
         }else if (isTwoHandedAxe || isWarHammer) { // OK
-            reachR = 60.0f;
+            reachR = 70.0f;
             handleR = 70.0f;
         } else if (isGreatSword) { // OK
             reachR = 100.0f;
@@ -596,13 +628,13 @@ bool ZacOnFrame::FrameGetWeaponPos(RE::Actor* actor, RE::NiPoint3& posWeaponBott
             reachR = 20.0f;
             handleR = 10.0f;
         } else if (isSwordR) {  // OK
-            reachR = 80.0f;
+            reachR = 90.0f;
             handleR = 12.0f;
         } else if (isAxeR) {  // OK
-            reachR = 50.0f;
+            reachR = 60.0f;
             handleR = 12.0f;
         } else if (isMaceR) {  // OK
-            reachR = 50.0f;
+            reachR = 60.0f;
             handleR = 12.0f;
         } else if (isStaffR) {  // OK
             reachR = 70.0f;
@@ -616,7 +648,7 @@ bool ZacOnFrame::FrameGetWeaponPos(RE::Actor* actor, RE::NiPoint3& posWeaponBott
         posWeaponTopR = posWeaponBottomR + weaponDirectionR * reachR;
         posWeaponBottomR = posWeaponBottomR - weaponDirectionR * handleR;
 
-        //debug_show_weapon_range(actor, posWeaponBottomR, posWeaponTopR, weaponR);
+        if (bShowWeaponSegment) debug_show_weapon_range(actor, posWeaponBottomR, posWeaponTopR, weaponR);
     } else {
         log::trace("Doesn't get right weapon. actor:{}", actor->GetBaseObject()->GetName());
         /*if (isPlayer) {
@@ -639,6 +671,6 @@ RE::hkVector4 ZacOnFrame::CalculatePushVector(RE::NiPoint3 sourcePos, RE::NiPoin
         pushDirection.x /= length;
         pushDirection.y /= length;
     }
-    float pushMulti = isEnemy ? fEnemyPushMulti : fPlayerPushMulti;
+    float pushMulti = isEnemy ? fEnemyPushMulti : 0.0; // TODO: change this after implement player push
     return RE::hkVector4(pushDirection.x * pushMulti, pushDirection.y * pushMulti, 0.0f, 0.0f);
 }

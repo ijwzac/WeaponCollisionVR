@@ -56,7 +56,6 @@ namespace ZacOnFrame {
               enemyOriAngleZ(z),
               enemyIsRotClockwise(cl), enemyRotFrame(ro) {}
        
-        // Accessors for the class members (could be useful in comparisons)
         RE::Actor* getEnemy() const { return enemy; }
         int64_t getFrame() const { return iFrameCollision; }
         void setValues(RE::Actor* e, int64_t frame, RE::NiPoint3 p, RE::hkVector4 h, float z, bool cl, int64_t ro) {
@@ -125,20 +124,19 @@ namespace ZacOnFrame {
 
         // For several frames, change the velocity of enemy, to push them away
         void ChangeVelocity() {
-        
+            log::trace("Entering ChangeVelocity, hkv length:{}", hkv.SqrLength3());
             if (hkv.SqrLength3() < 10.0f) {
                 return;
             }
 
-            // If enemy is already far enough, set hkv to zero so they won't be pushed farther
-            if (enemy->GetPosition().GetDistance(enemyOriPos) > fEnemyPushMaxDist) {
-                log::trace("Setting hkv to 0");
+            // If enemy is already far enough or this function is about to get no more call, set hkv to zero so they won't be pushed farther
+            if (enemy->GetPosition().GetDistance(enemyOriPos) > fEnemyPushMaxDist ||
+                (iFrameCount - iFrameCollision == collisionIgnoreDur - 3)) {
                 hkv = hkv * 0.0f;
             }
 
-            log::trace("Normal push. hkv length:{}", hkv.SqrLength3());
-
             if (enemy && enemy->GetCharController()) {
+                log::trace("About to change enemy speed, hkv length:{}", hkv.SqrLength3());
                 RE::hkVector4 tmp;
                 enemy->GetCharController()->GetLinearVelocityImpl(tmp);
                 //tmp = tmp + hkv; // new speed considers old speed

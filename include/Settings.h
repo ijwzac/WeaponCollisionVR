@@ -1,59 +1,65 @@
 #pragma once
 
-// Global
+// Whole mod
 extern bool bEnableWholeMod;
+
+// Global
 extern int64_t iFrameCount;
-//extern RE::BSScript::IVirtualMachine* papyrusVM;
+extern int64_t iFrameLastCollision; // the last collision, no matter with whom
 extern bool bHandToHandLoad;
-
-// Debug
 extern int globalInputCounter;
-extern bool bShowWeaponSegment;
 
-// detect nearby enemy
-extern float fDetectEnemy;
+// Parry difficulty
+extern float fRangeMulti;          // controls the effective length of weapon in this mod
+extern float fCollisionDistThres;  // if two weapons are closer than this number, it's a collision
+extern bool bPlayerMustBeAttacking; // Recommended for non-VR players to turn on. VR player should turn off.
 
-// collision difficulty
-extern float fRangeMulti; // controls the effective length of weapon in this mod
-extern float fCollisionDistThres; // if two weapons are closer than this number, it's a collision
-
-// Prevent collision if there is a recent one on the same enemy
-extern int64_t collisionIgnoreDur; // after a collision, within this number of frames, don't compute collision of the same enemy
-
-// collision effect on enemy
-extern float fEnemyPushMulti; // the speed multiplier that the enemy will be pushed
-extern float fEnemyPushMaxDist; // the max distance the enemy will be pushed
-extern float fEnemyRotStep; // the angle enemy rotates every frame. Frame decided by RotateFrame()
-
-extern float fEnemyStaCostMin; // minimal stamina cost to enemy
-extern float fEnemyStaCostMax;  // max stamina cost to enemy. Power attack X2 is after this check
-extern float fEnemyStaCostWeapMulti; // multiplier of stamina cost. 
-                                    // The value after mutliply still need to fit in the min and max
-extern float fEnemyStaStopThresPer;  // when enemy stamina below this percent, they stop current attack
+// Parry effect on enemy
+extern float fEnemyPushMulti;    // the speed multiplier that the enemy will be pushed
+extern float fEnemyPushMaxDist;  // the max distance the enemy will be pushed
+extern float fEnemyRotStep;      // the angle enemy rotates every frame. Frame decided by RotateFrame()
+extern float fEnemyStaCostMin;   // minimal stamina cost to enemy
+extern float fEnemyStaCostMax;   // max stamina cost to enemy. Power attack X2 is after this check
+extern float fEnemyStaCostWeapMulti;        // multiplier of stamina cost.
+                                            // The value after mutliply still need to fit in the min and max
+extern float fEnemyStaStopThresPer;         // when enemy stamina below this percent, they stop current attack
 extern float fEnemyStaLargeRecoilThresPer;  // when enemy stamina below this percent, they stop and have large recoil
 
-// collision effect on player
+// Parry effect on player
 // Note: even if player's stamina is 0, they can still parry
-extern float fPlayerPushMulti;
-extern float fPlayerStaCostMax;        // max stamina cost to player
-extern float fPlayerStaCostWeapMulti;  // multiplier of enemy's attack power.
-extern float fPlayerStaCostMin;        // multiplier of stamina cost. 
-                                      // The value after mutliply still need to fit in the min and max
-extern float fPlayerWeaponSpeedRewardThres; // when player moves weapon at higher speed than this, their stamina cost is reduced by half
-extern float fPlayerWeaponSpeedReward; // Multiplier os stamina cost if high speed
+extern int64_t collisionEffectDurPlayerShort; // When player hits enemy within this amount of frames, nullify this hit.
+extern float fPlayerStaCostMax;              // max stamina cost to player
+extern float fPlayerStaCostWeapMulti;        // multiplier of enemy's attack power.
+extern float fPlayerStaCostMin;              // multiplier of stamina cost.
+                                             // The value after mutliply still need to fit in the min and max
+extern float fPlayerWeaponSpeedRewardThres;  // when player moves weapon at higher speed than this, their stamina cost
+                                             // is reduced by half
+extern float fPlayerWeaponSpeedReward;       // Multiplier os stamina cost if high speed
 extern float fPlayerWeaponSpeedRewardThres2;
 extern float fPlayerWeaponSpeedReward2;
-extern int iHapticStrMin;
-extern int iHapticStrMax;
-extern float fHapticMulti; // same logic above. Haptic decided by stamina cost
-extern int iHapticLengthMicroSec; 
-extern float fExpBlock; // Exp obtained for every collision
+extern float fPlayerStaStopThresPer;         // when player stamina below this percent, they stop current attack
+extern float fPlayerStaLargeRecoilThresPer;  // when player stamina below this percent, they stop and have large recoil
+
+// Player experience obtained for every collision
+extern float fExpBlock;
 extern float fExpOneHand;
 extern float fExpTwoHand;
-extern float fExpHandToHand;
+extern float fExpHandToHand; // Only useful when Adaman - Hand to Hand VR patch is installed
 
-// onMeleeHit settings
-extern int64_t collisionEffectDurEnemyShort; // after a collision, within this number of frames, a hit event must be affected
+// Haptic feedback
+extern int iHapticStrMin;
+extern int iHapticStrMax;
+extern float fHapticMulti;  // same logic above. Haptic decided by stamina cost
+extern int iHapticLengthMicroSec; 
+
+// Settings for internal usage. Don't change unless you understand the code
+extern bool bEnableTrace; // Turn on the trace
+extern float fDetectEnemy; // Calculate collisions between player and only enemies within this range
+extern int64_t collisionIgnoreDur; // After a collision, within this number of frames, don't compute collision of the same enemy
+                                    // This is to prevent having tens of collisions when weapons are close
+                                    // 
+extern bool bShowWeaponSegment; // For debug. This shows the weapon range in this mod. May hurt your eyes
+extern int64_t collisionEffectDurEnemyShort; // after a collision, within this number of frames, a hit event from enemy must be affected
 extern int64_t
     collisionEffectDurEnemyLong;  // after a collision, within this number of frames, 
                             // a hit event is affected if affectEnemyOnHit/affectPlayerOnHit is 1
@@ -104,13 +110,31 @@ public:
 
     struct Main {
         void Load(CSimpleIniA& a_ini);
-
     } sMain;
 
-    struct Scores {
+    struct Difficulty {
         void Load(CSimpleIniA& a_ini);
+    } sDifficulty;
 
-    } scores;
+    struct EffectOnEnemy {
+        void Load(CSimpleIniA& a_ini);
+    } sEffectOnEnemy;
+
+    struct EffectOnPlayer {
+        void Load(CSimpleIniA& a_ini);
+    } sEffectOnPlayer;
+
+    struct Experience {
+        void Load(CSimpleIniA& a_ini);
+    } sExperience;
+
+    struct Haptic {
+        void Load(CSimpleIniA& a_ini);
+    } sHaptic;
+
+    struct Technique {
+        void Load(CSimpleIniA& a_ini);
+    } sTechnique;
 
 private:
     Settings() = default;
@@ -177,7 +201,7 @@ public:
     // Log information about Menu open/close events that happen in the game
     RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* event,
                                           RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override {
-        logger::trace("Menu {} Open? {}", event->menuName, event->opening); 
+        // logger::trace("Menu {} Open? {}", event->menuName, event->opening); 
         if (event->menuName == "Console"sv && event->opening == false) {
             logger::trace("Console close. Now reload config"); 
             Settings::GetSingleton()->Load();

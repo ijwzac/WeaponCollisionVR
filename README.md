@@ -1,52 +1,23 @@
-# Parrying RPG
-[![C++23](https://img.shields.io/static/v1?label=standard&message=C%2B%2B23&color=blue&logo=c%2B%2B&&logoColor=white&style=flat)](https://en.cppreference.com/w/cpp/compiler_support)
-[![Platform](https://img.shields.io/static/v1?label=platform&message=windows&color=dimgray&style=flat)](#)
-![GitHub](https://img.shields.io/github/license/DennisSoemers/ParryingRPG)
-![GitHub release (latest by date)](https://img.shields.io/github/v/release/DennisSoemers/ParryingRPG)
+﻿## Mod page
+Pseudo Physical Weapon Collision and Parry AE SE VR
+https://www.nexusmods.com/skyrimspecialedition/mods/100781
 
-A reimplementation of [fenix31415's Parrying mod](https://www.nexusmods.com/skyrimspecialedition/mods/65133) for Skyrim, 
-with some additional features. 
+## What may be interesting in this project, to mod authors
+How to get the position and (kinda) retotion of weapons
+How to hook to melee hit event
+How to hook to every frame
 
-## Download
 
-The plugin can be downloaded from [its NexusMods page](https://www.nexusmods.com/skyrimspecialedition/mods/81356).
-
-## Runtime Requirements (for users)
-
-At runtime, the plugin has the following requirements. Any user of this plugin (or mods that in turn require this plugin) need to have this installed locally.
-
-- The Elder Scrolls V: Skyrim Special Edition.
-  - Tested with version 1.5.97 (SSE).
-  - Compatible with versions 1.6.353 and above as of version 2.0.0.
-  - Compatible with Skyrim VR as of version 2.0.1.
-- [Skyrim Script Extender](https://skse.silverlock.org/)
-- [Address Library for SKSE Plugins](https://www.nexusmods.com/skyrimspecialedition/mods/32444)
-
-## Build Requirements (for plugin developers)
-
-Building the code in this repository has the following requirements.
-
-- [Visual Studio](https://visualstudio.microsoft.com/).
-- [CMake](https://cmake.org/).
-- [Vcpkg](https://github.com/microsoft/vcpkg).
-
-This project was set up exactly as in the [CommonLibSSE NG Sample Plugin](https://gitlab.com/colorglass/commonlibsse-sample-plugin), 
-and I refer to that repository for highly detailed instructions on installation and building.
+## TODO
+I am still trying to make this README better. Hard to remember how I set up the environment and built the original code from Borgut1337...
 
 ## Credits
 
-Thanks to:
-- [fenix31415](https://github.com/fenix31415) for the original implementation of the [Parrying -- Weapons Bounce on Impact](https://www.nexusmods.com/skyrimspecialedition/mods/65133) mod.
-- [max-su-2019](https://github.com/max-su-2019/) and [doodlum](https://github.com/doodlum/) for source code from 
-[MaxsuWeaponSwingParry-ng](https://github.com/doodlum/MaxsuWeaponSwingParry-ng).
-- [powerof3](https://github.com/powerof3/) for code I used as example for reading/writing .ini files.
-- [ersh1](https://github.com/ersh1) for some code and hooks I used from [Precision](https://github.com/ersh1/Precision).
-- [D7ry](https://github.com/D7ry) for some code and hooks I used from [Valhalla Combat](https://github.com/D7ry/valhallaCombat).
-- CharmedBaryon for [CommonLibSSE NG](https://github.com/CharmedBaryon/CommonLibSSE-NG) and the [CommonLibSSE NG Sample Plugin](https://gitlab.com/colorglass/commonlibsse-sample-plugin).
-- The SKSE authors for [SKSE](http://skse.silverlock.org/).
-- Meh321 for [Address Library for SKSE Plugins](https://www.nexusmods.com/skyrimspecialedition/mods/32444).
-
-## Disclaimer
-
-- THIS MATERIAL IS NOT MADE, GUARANTEED OR SUPPORTED BY ZENIMAX OR ITS AFFILIATES.
-- ALL FILES IN THE DOWNLOAD ARE PROVIDED ''AS IS'' WITHOUT ANY WARRANTY OR GUARANTEE OF ANY KIND. IN NO EVENT CAN THE AUTHOR BE HELD RESPONSIBLE FOR ANY CLAIMS, WHETHER OR NOT THEY ARE RELATED TO THE DOWNLOAD.
+This mod uses lots of code from other mods and receives help from many modders. I really appreciate the open source modding community!
+- Thanks to Borgut1337. This mod starts as a patch for Parrying RPG﻿, though ends up with doing something quite different
+- Thanks to fenix31415. Parrying -- weapons bounce on impact﻿ provides the original idea
+- Thanks to doodlum. I used his code in Simple Weapon Swing Parry - NG﻿ to hook to melee hit event
+- Thanks to ThirdEye3301 and Flip from Discord. They taught me how to hook to the frame update, like in Dynamic Gamma SKSE﻿
+- Thanks to Shizof and FlyingParticle. I learnt a lot from their open source VR mods
+- Thanks to CharmedBaryon for maintaining CommonLibSSE-NG﻿
+- Thanks to the SKSE team

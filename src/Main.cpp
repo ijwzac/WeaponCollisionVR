@@ -42,13 +42,14 @@ namespace {
                 "Global", std::make_shared<spdlog::sinks::basic_file_sink_mt>(path->string(), true));
         }
 
-        const auto level = spdlog::level::trace;
+        const auto level = spdlog::level::info;
 
         log->set_level(level);
         log->flush_on(level);
 
         spdlog::set_default_logger(std::move(log));
         spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%n] [%l] [%t] [%s:%#] %v");
+
     }
 
     /**
@@ -127,6 +128,10 @@ SKSEPluginLoad(const LoadInterface* skse) {
     } catch (...) {
         logger::error("Exception caught when loading settings! Default settings will be used");
     }
+
+    spdlog::level::level_enum level = spdlog::level::info;
+    if (bEnableTrace) level = spdlog::level::trace;
+    spdlog::default_logger()->set_level(level);
 
     if (bEnableWholeMod == false) {
         log::info("{} is disabled.", plugin->GetName());

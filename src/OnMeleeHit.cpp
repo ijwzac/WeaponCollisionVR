@@ -30,13 +30,16 @@ void OnMeleeHitHook::InstallHook() {
 
 void OnMeleeHitHook::OnMeleeHit(RE::Actor* hit_causer, RE::Actor* hit_target, std::int64_t a_int1, bool a_bool,
                                 void* a_unkptr) {
+    //log::trace("Hit causer:{}. Target:{}", hit_causer->GetDisplayFullName(),
+    //           hit_target->GetDisplayFullName());
     if (bEnableWholeMod) {
         auto playerAA = RE::PlayerCharacter::GetSingleton();
         if (playerAA) {
             auto playerActor = static_cast<RE::Actor*>(playerAA);
             if (playerActor) {
+                log::trace("Hit causer:{}. Target:{}. Causer is player:{}", hit_causer->GetDisplayFullName(), hit_target->GetDisplayFullName(), hit_causer == playerActor);
                 if (hit_target == playerActor) {
-                    log::trace("Delay a hit");
+                    log::trace("Delay a hit to player");
                     // If hitting the player, we record everything we need to call the vanilla _OnMeleeHit, and call it
                     // a few frames later
                     auto h =
@@ -44,6 +47,14 @@ void OnMeleeHitHook::OnMeleeHit(RE::Actor* hit_causer, RE::Actor* hit_target, st
                     meleeQueue.PushCopy(h);
                     return;
                 }
+                //if (hit_causer == playerActor) { // This is not working, probably because PLANCK changes the hit event
+                //    log::trace("Checking if player just had weapon collision so this attack should be nullified");
+                //    auto diff = iFrameCount - iFrameLastCollision;
+                //    if (diff > 0 && diff < collisionEffectDurPlayerShort) {
+                //        log::trace("Nullify player attack");
+                //        return;
+                //    }
+                //}
             }
         }
     }

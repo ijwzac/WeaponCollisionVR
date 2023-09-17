@@ -5,9 +5,9 @@ message("Using toolchain file ${CMAKE_TOOLCHAIN_FILE}.")
 ## Define project
 ########################################################################################################################
 project(
-        ParryingRPG
+        WeaponCollision
         VERSION 2.0.1
-        DESCRIPTION "A reimplementation of fenix31415's Parrying mod for Skyrim, with some additional features."
+        DESCRIPTION "A mod that precisely calculate the collision between the weapons of player and enemies."
         LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
