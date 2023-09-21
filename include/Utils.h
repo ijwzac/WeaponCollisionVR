@@ -15,3 +15,6 @@ bool IsOneHandWeap(RE::Actor*, bool);
 bool IsTwoHandWeap(RE::Actor*, bool);
 
 bool IsHandToHand(RE::Actor*, bool);
+
+
+float CalculatePushDist(bool isEnemy, float speed);

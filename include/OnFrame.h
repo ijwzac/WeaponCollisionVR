@@ -21,8 +21,11 @@ namespace ZacOnFrame {
     void OnFrameUpdate();
     void CollisionDetection();
     bool FrameGetWeaponPos(RE::Actor*, RE::NiPoint3&, RE::NiPoint3&, RE::NiPoint3&, RE::NiPoint3&, bool);
+    bool FrameGetWeaponFixedPos(RE::Actor*, RE::NiPoint3&, RE::NiPoint3&, RE::NiPoint3&, RE::NiPoint3&);
     bool IsNiPointZero(const RE::NiPoint3&);
     void CollisionEffect(RE::Actor*, RE::Actor*, RE::NiPoint3 contactPos, bool, bool);
+    RE::hkVector4 CalculatePushVector(RE::NiPoint3 sourcePos, RE::NiPoint3 targetPos, bool isEnemy, float speed);
+    float CalculatePlayerPushDist(float speed);
 
     
 
@@ -35,9 +38,11 @@ namespace ZacOnFrame {
         RE::Actor* enemy;
         int64_t iFrameCollision;
         int affectEnemyOnHit = 0; // If 1, the next OnHit event from enemy is nullified, and sets this to 0
-        int affectPlayerOnHit = 0;
         RE::hkVector4 hkv; // the velocity used to push enemy away
         RE::NiPoint3 enemyOriPos; // the original position of enemy at collision, used to prevent enemy from being push too far
+        float pushEnemyMaxDist; // the max distance to push enemy. We check both this and fEnemyPushMaxDist
+        float contactToEnemyBottom;  // the distance between collision point and enemy weapon bottom, used to spawn spark for several frames
+        bool isEnemyLeft; // if the collision happens on enemy's left weapon
         float enemyOriAngleZ;
         int angleSetCount = 0;
         bool enemyIsRotClockwise;
@@ -46,37 +51,32 @@ namespace ZacOnFrame {
         // We must have a default constructor, to avoid non-determined behavior
         Collision() : enemy(nullptr), iFrameCollision(0) {}
         // Parameterized constructor
-        Collision(RE::Actor* e, int64_t frame, RE::NiPoint3 p, RE::hkVector4 h, float z, bool cl, int64_t ro)
+        Collision(RE::Actor* e, int64_t frame, RE::NiPoint3 pE, float pushEnemyMaxDist, float contactToEnemyBottom,
+                  bool isLeft,
+                  RE::hkVector4 h, float z, bool cl,
+                  int64_t ro)
             : enemy(e),
               iFrameCollision(frame),
               affectEnemyOnHit(1),
-              affectPlayerOnHit(1),
-              enemyOriPos(p),
+              enemyOriPos(pE),
+              pushEnemyMaxDist(pushEnemyMaxDist),
+              contactToEnemyBottom(contactToEnemyBottom),
+              isEnemyLeft(isLeft),
               hkv(h),
               enemyOriAngleZ(z),
               enemyIsRotClockwise(cl), enemyRotFrame(ro) {}
        
         RE::Actor* getEnemy() const { return enemy; }
         int64_t getFrame() const { return iFrameCollision; }
-        void setValues(RE::Actor* e, int64_t frame, RE::NiPoint3 p, RE::hkVector4 h, float z, bool cl, int64_t ro) {
-            enemy = e;
-            iFrameCollision = frame;
-            enemyOriPos = p;
-            hkv = h;
-            affectEnemyOnHit = 1;
-            affectPlayerOnHit = 1;
-            enemyOriAngleZ = z;
-            angleSetCount = 0;
-            enemyIsRotClockwise = cl;
-            enemyRotFrame = ro;
-        }
         void setValues(Collision& col) {
             enemy = col.enemy;
             iFrameCollision = col.iFrameCollision;
             enemyOriPos = col.enemyOriPos;
+            pushEnemyMaxDist = col.pushEnemyMaxDist;
+            contactToEnemyBottom = col.contactToEnemyBottom;
+            isEnemyLeft = col.isEnemyLeft;
             hkv = col.hkv;
             affectEnemyOnHit = 1;
-            affectPlayerOnHit = 1;
             enemyOriAngleZ = col.enemyOriAngleZ;
             angleSetCount = 0;
             enemyIsRotClockwise = col.enemyIsRotClockwise;
@@ -111,6 +111,32 @@ namespace ZacOnFrame {
             return nullify;
         }
 
+        // Deprecated: the contactToEnemyBottom is not correct. For several frames, continue to spawn sparks on enemy's weapon
+        void SpawnSpark() {
+            if (iFrameCount - iFrameCollision < iSparkSpawn && iFrameCount % 3 == 0) {
+                const auto nodeName = isEnemyLeft ? "SHIELD"sv : "WEAPON"sv;
+                auto root = netimmerse_cast<RE::BSFadeNode*>(enemy->Get3D());
+                if (!root) return;
+                auto bone = netimmerse_cast<RE::NiNode*>(root->GetObjectByName(nodeName));
+                if (!bone) return;
+                auto enemyActor = enemy;
+                auto posWeaponBottom = bone->world.translate;
+                const auto weaponDirection = RE::NiPoint3{
+                    bone->world.rotate.entry[0][1], bone->world.rotate.entry[1][1], bone->world.rotate.entry[2][1]};
+                RE::NiPoint3 contactPosition = posWeaponBottom + weaponDirection * contactToEnemyBottom;
+                // don't capture `this` since it may be destroyed before task executed
+                SKSE::GetTaskInterface()->AddTask([enemyActor, contactPosition, bone]() { 
+                    RE::NiPoint3 P_V = {0.0f, 0.0f, 0.0f};
+                    RE::NiPoint3 contactPosition_tmp = contactPosition; // making compiler happy, since lambda is const by default
+                    // Display spark on enemy's weapon, at the collision point
+                    OnMeleeHit::play_impact_2(enemyActor, RE::TESForm::LookupByID<RE::BGSImpactData>(0x0004BB54), &P_V,
+                                              &contactPosition_tmp, bone);
+                });
+
+            }
+        }
+
+        // For several frames, change the angle of enemy, creating hit juice
         void ChangeAngle() { 
             if (angleSetCount < enemyRotFrame) {
                 if (enemyIsRotClockwise) {
@@ -124,23 +150,35 @@ namespace ZacOnFrame {
 
         // For several frames, change the velocity of enemy, to push them away
         void ChangeVelocity() {
-            log::trace("Entering ChangeVelocity, hkv length:{}", hkv.SqrLength3());
-            if (hkv.SqrLength3() < 10.0f) {
+            float x = hkv.quad.m128_f32[0];
+            float y = hkv.quad.m128_f32[1];
+            log::trace("Entering ChangeVelocity of enemy, hkv.x:{}, hkv.y:{}", x,
+                       y);
+            /*if (sqrt(x * x + y * y) < 10.0f) {
                 return;
-            }
+            }*/
 
             // If enemy is already far enough or this function is about to get no more call, set hkv to zero so they won't be pushed farther
-            if (enemy->GetPosition().GetDistance(enemyOriPos) > fEnemyPushMaxDist ||
-                (iFrameCount - iFrameCollision == collisionIgnoreDur - 3)) {
+            auto dist = enemy->GetPosition().GetDistance(
+                enemyOriPos); 
+            if (dist > fEnemyPushMaxDist || dist > pushEnemyMaxDist ||
+                (iFrameCount - iFrameCollision == collisionIgnoreDur - 3)) { 
                 hkv = hkv * 0.0f;
+                if (enemy && enemy->GetCharController()) {
+                    RE::hkVector4 tmp;
+                    enemy->GetCharController()->GetLinearVelocityImpl(tmp);
+                    tmp = tmp * 0.0f;  // reset speed
+                    enemy->GetCharController()->SetLinearVelocityImpl(tmp);
+                }
+                return;
             }
 
             if (enemy && enemy->GetCharController()) {
                 log::trace("About to change enemy speed, hkv length:{}", hkv.SqrLength3());
                 RE::hkVector4 tmp;
                 enemy->GetCharController()->GetLinearVelocityImpl(tmp);
-                //tmp = tmp + hkv; // new speed considers old speed
-                tmp = hkv;  // new speed doesn't consider old speed
+                tmp = tmp + hkv; // new speed considers old speed
+                //tmp = hkv;  // new speed doesn't consider old speed
                 enemy->GetCharController()->SetLinearVelocityImpl(tmp);
             }
 
@@ -202,6 +240,100 @@ namespace ZacOnFrame {
 
     extern CollisionRing colBuffer;
 
+    class PlayerCollision { // Only recording info related to player of the last collision
+        int64_t frameLastCollision;
+        float contactToBottom;
+        bool isLeft;
+        RE::hkVector4 pushVelocity;  // the velocity used to push player away
+        int64_t frameToPush; // push player for how many frames
+        float maxPushDis; // push player for at most how far. We check both this and fPlayerPushMaxDist
+        RE::NiPoint3 posLastCollision;
+        RE::Actor* playerAct;
+
+    public:
+        static PlayerCollision* GetSingleton() { 
+            static PlayerCollision singleton;
+            return std::addressof(singleton);
+        }
+
+        bool IsEmpty() { return frameLastCollision == 0; }
+        
+        void SetValue(int64_t fLC, float cTB, bool iL, RE::hkVector4 hkv, int64_t fTP, float mPD,
+                      RE::NiPoint3 pLC, RE::Actor* pA) {
+            auto singleton = PlayerCollision::GetSingleton();
+            singleton->frameLastCollision = fLC;
+            singleton->contactToBottom = cTB;
+            singleton->isLeft = iL;
+            singleton->pushVelocity = hkv;
+            singleton->frameToPush = fTP;
+            singleton->maxPushDis = mPD;
+            singleton->posLastCollision = pLC;
+            singleton->playerAct = pA;
+        }
+
+        // For several frames, continue to spawn sparks on player's weapon
+        void SpawnSpark() {
+            if (iFrameCount - frameLastCollision < iSparkSpawn && iFrameCount % 4 == 0) {
+                const auto nodeName = isLeft ? "SHIELD"sv : "WEAPON"sv;
+                auto root = netimmerse_cast<RE::BSFadeNode*>(playerAct->Get3D());
+                if (!root) return;
+                auto bone = netimmerse_cast<RE::NiNode*>(root->GetObjectByName(nodeName));
+                if (!bone) return;
+                auto playerActor = playerAct;
+                auto posPlayerHand = bone->world.translate;
+                const auto weaponDirection = RE::NiPoint3{
+                    bone->world.rotate.entry[0][1], bone->world.rotate.entry[1][1], bone->world.rotate.entry[2][1]};
+                RE::NiPoint3 contactPosition = posPlayerHand + weaponDirection * contactToBottom;
+                // don't capture `this` since it may be destroyed before task executed
+                SKSE::GetTaskInterface()->AddTask([playerActor, contactPosition, bone]() {
+                    RE::NiPoint3 P_V = {0.0f, 0.0f, 0.0f};
+                    RE::NiPoint3 contactPosition_tmp =
+                        contactPosition;  // making compiler happy, since lambda is const by default
+                    // Display spark on player's weapon, at the collision point
+                    OnMeleeHit::play_impact_2(playerActor, RE::TESForm::LookupByID<RE::BGSImpactData>(0x0004BB54), &P_V,
+                                              &contactPosition_tmp, bone);
+                });
+            }
+        }
+
+        // For several frames, change the velocity of player, to push them away
+        void ChangeVelocity() {
+            float x = pushVelocity.quad.m128_f32[0];
+            float y = pushVelocity.quad.m128_f32[1];
+            log::trace("Entering ChangeVelocity of player, pushVelocity.x:{}, pushVelocity.y:{}", x, y);
+            /*if (sqrt(x * x + y * y) < 10.0f) {
+                return;
+            }*/
+
+            if (iFrameCount - frameLastCollision > frameToPush) return;
+
+            // If player is already far enough or this function is about to get no more call, set hkv to zero so they
+            // won't be pushed farther
+            auto dist = playerAct->GetPosition().GetDistance(posLastCollision);
+            if (dist > fPlayerPushMaxDist || dist > maxPushDis) {
+                pushVelocity = pushVelocity * 0.0f;
+                if (playerAct && playerAct->GetCharController()) {
+                    RE::hkVector4 tmp;
+                    playerAct->GetCharController()->GetLinearVelocityImpl(tmp);
+                    tmp = tmp * 0.0f; // set player speed to 0
+                    playerAct->GetCharController()->SetLinearVelocityImpl(tmp);
+                }
+                return;
+            }
+
+            if (playerAct && playerAct->GetCharController()) {
+                log::trace("About to change player speed, pushVelocity length:{}", pushVelocity.SqrLength3());
+                RE::hkVector4 tmp;
+                playerAct->GetCharController()->GetLinearVelocityImpl(tmp);
+                tmp = tmp + pushVelocity;  // new speed considers old speed
+                //tmp = pushVelocity;
+                playerAct->GetCharController()->SetLinearVelocityImpl(tmp);
+            }
+
+            return;
+        }
+    };
+
     class WeaponPos { // this class is just used to store player's weapon pos and calculate speed
     public:
         RE::NiPoint3 bottom;
@@ -255,7 +387,6 @@ namespace ZacOnFrame {
     };
     extern SpeedRing speedBuf;
 
-    RE::hkVector4 CalculatePushVector(RE::NiPoint3 sourcePos, RE::NiPoint3 targetPos, bool isEnemy);
 
 
 }

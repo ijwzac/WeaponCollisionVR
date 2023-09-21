@@ -5,7 +5,6 @@ extern bool bEnableWholeMod;
 
 // Global
 extern int64_t iFrameCount;
-extern int64_t iFrameLastCollision; // the last collision, no matter with whom
 extern bool bHandToHandLoad;
 extern int globalInputCounter;
 
@@ -15,7 +14,7 @@ extern float fCollisionDistThres;  // if two weapons are closer than this number
 extern bool bPlayerMustBeAttacking; // Recommended for non-VR players to turn on. VR player should turn off.
 
 // Parry effect on enemy
-extern float fEnemyPushMulti;    // the speed multiplier that the enemy will be pushed
+extern float fEnemyPushVelocityMulti;  // the speed multiplier that the enemy will be pushed
 extern float fEnemyPushMaxDist;  // the max distance the enemy will be pushed
 extern float fEnemyRotStep;      // the angle enemy rotates every frame. Frame decided by RotateFrame()
 extern float fEnemyStaCostMin;   // minimal stamina cost to enemy
@@ -25,9 +24,14 @@ extern float fEnemyStaCostWeapMulti;        // multiplier of stamina cost.
 extern float fEnemyStaStopThresPer;         // when enemy stamina below this percent, they stop current attack
 extern float fEnemyStaLargeRecoilThresPer;  // when enemy stamina below this percent, they stop and have large recoil
 
+extern float fEnemyStopVelocityThres;       // When player's weapon speed is above this, enemy stop current attack
+extern float fEnemyLargeRecoilVelocityThres;  // When player's weapon speed is above this, enemy stop current attack and recoil
+
 // Parry effect on player
 // Note: even if player's stamina is 0, they can still parry
-extern int64_t collisionEffectDurPlayerShort; // When player hits enemy within this amount of frames, nullify this hit.
+extern float fPlayerPushVelocityMulti;         // the speed multiplier that the player will be pushed
+extern float fPlayerPushMaxDist;                // the max distance the player will be pushed
+extern int64_t collisionEffectDurPlayerShort;  // When player hits enemy within this amount of frames, nullify this hit.
 extern float fPlayerStaCostMax;              // max stamina cost to player
 extern float fPlayerStaCostWeapMulti;        // multiplier of enemy's attack power.
 extern float fPlayerStaCostMin;              // multiplier of stamina cost.
@@ -39,6 +43,7 @@ extern float fPlayerWeaponSpeedRewardThres2;
 extern float fPlayerWeaponSpeedReward2;
 extern float fPlayerStaStopThresPer;         // when player stamina below this percent, they stop current attack
 extern float fPlayerStaLargeRecoilThresPer;  // when player stamina below this percent, they stop and have large recoil
+extern int64_t iSparkSpawn; // number of frames that we spawn spark on weapons.
 
 // Player experience obtained for every collision
 extern float fExpBlock;
@@ -205,6 +210,9 @@ public:
         if (event->menuName == "Console"sv && event->opening == false) {
             logger::trace("Console close. Now reload config"); 
             Settings::GetSingleton()->Load();
+            spdlog::level::level_enum level = spdlog::level::info;
+            if (bEnableTrace) level = spdlog::level::trace;
+            spdlog::default_logger()->set_level(level);
         }
         return RE::BSEventNotifyControl::kContinue;
     }

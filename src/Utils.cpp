@@ -104,3 +104,24 @@ bool IsHandToHand(RE::Actor* actor, bool isLeft) {
         return true;
     }
 }
+
+float CalculatePushDist(bool isEnemy, float speed) {
+    float dist;
+    if (speed < 20.0f) {
+        dist = 100.0f;
+    } else if (speed < 40.0f) {
+        dist = 70.0f;
+    } else if (speed < 60.0f) {
+        dist = 50.0f;
+    } else if (speed < 80.0f) {
+        dist = 35.0f;
+    } else if (speed < 100.0f) {
+        dist = 15.0f;
+    } else {
+        dist = 0.0f;
+    }
+    if (isEnemy) {
+        dist = 110.0f - dist;
+    }
+    return dist;
+}

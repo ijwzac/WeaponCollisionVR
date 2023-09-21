@@ -73,6 +73,7 @@ public:
     RE::NiPoint3 contactPoint;
 
     DistResult(float d, RE::NiPoint3 p) : dist(d), contactPoint(p) {}
+    DistResult() : dist(9999.0f) {}
 };
 
 namespace OnMeleeHit {

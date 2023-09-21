@@ -73,8 +73,7 @@ DistResult OnMeleeHit::Dist(const RE::NiPoint3& A, const RE::NiPoint3& B, const 
                             const RE::NiPoint3& D) {
     // Check if any point is (0,0,0)
     if (AnyPointZero(A, B, C, D)) {
-        RE::NiPoint3 tmp;
-        return DistResult(123456.0f, tmp);
+        return DistResult();
     }
     const auto CD = D - C;
     float CD2 = CD * CD;

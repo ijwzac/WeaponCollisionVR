@@ -6,7 +6,6 @@ using namespace SKSE::log;
 // Global
 bool bEnableWholeMod = true;
 int globalInputCounter = 0;
-int64_t iFrameLastCollision = 0;
 bool bHandToHandLoad = false;
 float fRangeMulti = 1.0f;
 float fCollisionDistThres = 15.0f;
@@ -17,16 +16,21 @@ bool bEnableTrace = false;
 bool bPlayerMustBeAttacking = false;
 
 // Enemy
-float fEnemyPushMulti = 750.0f;
-float fEnemyPushMaxDist = 30.0f;
+float fEnemyPushVelocityMulti = 8.0f;
+float fEnemyPushMaxDist = 35.0f;
 float fEnemyRotStep = 0.15f;
 float fEnemyStaCostMin = 10.0f;
 float fEnemyStaCostMax = 60.0f;
 float fEnemyStaCostWeapMulti = 1.0f;
 float fEnemyStaStopThresPer = 0.3f;
 float fEnemyStaLargeRecoilThresPer = 0.05f;
+float fEnemyStopVelocityThres = 50.0f;
+float fEnemyLargeRecoilVelocityThres = 130.0f;
+int64_t iSparkSpawn = 10;
 
 // Player
+float fPlayerPushVelocityMulti = 8.0f;
+float fPlayerPushMaxDist = 60.0f;
 int64_t collisionEffectDurPlayerShort = 20;
 float fPlayerStaCostMin = 10.0f;
 float fPlayerStaCostMax = 60.0f;
@@ -46,12 +50,12 @@ float fExpOneHand = 2.0f; // At level 20, one-handed needs [110] exp to reach 21
 float fExpTwoHand = 2.0f; // [179]
 float fExpHandToHand = 2.0f; // [7] in vanilla, but this number may have been changed by Hand To Hand
 
-int64_t collisionIgnoreDur = 30;
+int64_t collisionIgnoreDur = 60;
 int64_t collisionEffectDurEnemyShort = 30;  // Within 30 frames, any attack from the enemy is nullified
 int64_t collisionEffectDurEnemyLong =
     90;  // Within 90 frames, only the first attack from enemy will be nullified
          // Is there any attack animation whose start and hit will be longer than 90 frames?
-int64_t iDelayEnemyHit = 6;
+int64_t iDelayEnemyHit = 9;
 
 
 Settings* Settings::GetSingleton() {
@@ -111,16 +115,6 @@ void Settings::Difficulty::Load(CSimpleIniA& a_ini) {
         "; The length of weapon is multiplied by this value. This length is only used by this mod.\n"
         "; Higher value means easier parry. \"1.0\" matches the models of most weapons pretty good. Default:\"1.0\" for VR, \"1.35\" for SE/AE");
 
-    detail::get_value(a_ini, fEnemyStaStopThresPer, section, "EnemyStopThreshold",
-        ";=======Enemy stagger=======\n"
-        ";\n"
-        "; When enemy's stamina is below this ratio, they will stop their attack combo. Set this to \"1.0\" to always stop them\n"
-        "; Set this to \"0.3\" to stop them when their stamina is below 30%. Default:\"0.3\"");
-
-    detail::get_value(a_ini, fEnemyStaLargeRecoilThresPer, section, "EnemyStaggerThreshold",
-        "; When enemy's stamina is below this ratio, they will stop their attack combo and stagger. Set this to "
-        "\"1.0\" to always stop and stagger them\n"
-        "; Set this to \"0.05\" to stop them when their stamina is below 5%. Default:\"0.05\"");
 
     detail::get_value(a_ini, fPlayerStaStopThresPer, section, "PlayerStopThreshold",
         ";=======Player stagger=======\n"
@@ -140,21 +134,48 @@ void Settings::EffectOnEnemy::Load(CSimpleIniA& a_ini) {
     static const char* section = "Parry Effect on Enemies";
 
     detail::get_value(
-        a_ini, fEnemyPushMulti, section, "EnemyPushMagnitude",
+        a_ini, fEnemyPushVelocityMulti, section, "EnemyPushSpeedMulti",
         ";=======Hit effect=======\n"
         ";\n"
-        "; After a parry, how fast the enemy should be pushed away. This creates a little juice as parry feedback\n"
-        "; Higher value means pushing faster and probably farther. Unit:~ 1.4 cm per second. Default:\"750.0\"");
+        "; After a parry, this value controls how fast the enemy should be pushed away. This creates a little juice as parry feedback\n"
+        "; Higher value means pushing faster farther. A value below 8.0 is often effectless. Default:\"8.0\"");
 
     detail::get_value(a_ini, fEnemyPushMaxDist, section, "EnemyPushDistance",
-        "; After a parry, how far the enemy should be pushed away.\n"
-        "; Higher value means pushing farther. Unit:~ 1.4 cm. Default:\"30.0\"");
+        "; After a parry, the max distance the enemy may be pushed away\n"
+        "; The actual distance is also increased by the speed of player's weapon\n"
+        "; Higher value means pushing farther. Unit:~ 1.4 cm. Default:\"35.0\"");
 
     detail::get_value(
         a_ini, fEnemyRotStep, section, "EnemyRotationMultiplier",
         "; After a parry, how fast the enemy should rotate. This creates a little juice as parry feedback. The rotation direction and duration is determined by the "
         "speed of your weapon.\n"
         "; Higher value means faster and more obvious rotation. Unit:~ 51 degrees per second. Default:\"0.15\"");
+
+    
+    detail::get_value(a_ini, fEnemyStopVelocityThres, section, "EnemyStopVelocityThreshold",
+        ";=======Enemy stagger based on player weapon speed (recommended to VR)=======\n"
+        ";\n"
+        "; When player's weapon speed is above this, enemy stop current attack.\n"
+        "; Unit:~ 1.5 cm per second. Default:\"9999.0\" (never triggered) for AE or SE player, \"50.0\" for VR player.");
+
+    detail::get_value(a_ini, fEnemyLargeRecoilVelocityThres, section, "EnemyStaggerVelocityThreshold",
+        "; When player's weapon speed is above this, enemy stop current attack.\n"
+        "; Unit:~ 1.5 cm per second. Default:\"9999.0\" (never triggered) for AE and SE player, \"130.0\" for VR player.");
+
+    detail::get_value(a_ini, fEnemyStaStopThresPer, section, "EnemyStopThreshold",
+        ";=======Enemy stagger based on stamina (recommended to SE/AE)=======\n"
+        ";\n"
+        "; When enemy's stamina is below this ratio, they will stop their attack combo. Set this to "
+        "\"1.0\" to always stop them\n"
+        "; Set this to \"0.3\" to stop them when their stamina is below 30%.\n"
+        "; Default:\"0.3\" for SE and AE player, \"0.0\" (never triggered) for VR player");
+
+    detail::get_value(
+        a_ini, fEnemyStaLargeRecoilThresPer, section, "EnemyStaggerThreshold",
+        "; When enemy's stamina is below this ratio, they will stop their attack combo and stagger. Set this to "
+        "\"1.0\" to always stop and stagger them\n"
+        "; Set this to \"0.05\" to stop them when their stamina is below 5%.\n"
+        "; Default:\"0.05\" for SE and AE player, \"0.0\" (never triggered) for VR player");
 
     
     detail::get_value(
@@ -175,6 +196,7 @@ void Settings::EffectOnEnemy::Load(CSimpleIniA& a_ini) {
     detail::get_value(a_ini, fEnemyStaCostMax, section, "EnemyMaxStaminaCost",
         "; The maximal stamina cost to the enemy for each parry. Default:\"60.0\"");
 
+
 }
 
 void Settings::EffectOnPlayer::Load(CSimpleIniA& a_ini) {
@@ -182,6 +204,18 @@ void Settings::EffectOnPlayer::Load(CSimpleIniA& a_ini) {
 
     //detail::get_value(a_ini, collisionEffectDurPlayerShort, section, "PlayerHitNullifyDuration",
     //    "; If player hits an enemy within this amount of frames after a parry, it's nullified. Default:\"20.0\"");
+
+    detail::get_value(a_ini, fPlayerPushVelocityMulti, section, "PlayerPushSpeedMulti",
+        ";=======Hit effect=======\n"
+        ";\n"
+        "; After a parry, this value controls how fast the player should be pushed away. This creates a "
+        "little juice as parry feedback\n"
+        "; Higher value means pushing faster farther. A value below 8.0 is often effectless. Default:\"8.0\"");
+
+    detail::get_value(a_ini, fPlayerPushMaxDist, section, "PlayerPushDistance",
+        "; After a parry, the max distance the player may be pushed away\n"
+        "; The actual distance is also increased by the speed of player's weapon\n"
+        "; Higher value means pushing farther. Unit:~ 1.4 cm. Default:\"60.0\"");
 
     detail::get_value(
         a_ini, fPlayerStaCostWeapMulti, section, "PlayerStaminaCostMultiplier",
@@ -246,11 +280,11 @@ void Settings::Experience::Load(CSimpleIniA& a_ini) {
 }
 
 void Settings::Haptic::Load(CSimpleIniA& a_ini) {
-    static const char* section = "VR Controller Haptic Vibration";
+    static const char* section = "Controller Vibration";
 
     detail::get_value(a_ini, fHapticMulti, section, "HapticStrengthMultiplier",
-        "; haptic_strength_on_VR_controller = Stamina_cost_to_player * HapticStrengthMultiplier.\n"
-        "; The final haptic_strength_on_VR_controller is modified to fit in [HapticStrengthMin, HapticStrengthMax].\n"
+        "; haptic_strength_on_controller = Stamina_cost_to_player * HapticStrengthMultiplier.\n"
+        "; The final haptic_strength_on_controller is modified to fit in [HapticStrengthMin, HapticStrengthMax].\n"
         ";\n"
         "; As shown above, the actual stamina cost multiplies this value is the haptic strength. Default:\"1.0\"");
 
@@ -266,6 +300,10 @@ void Settings::Haptic::Load(CSimpleIniA& a_ini) {
 
 void Settings::Technique::Load(CSimpleIniA& a_ini) {
     static const char* section = "Other Settings for Debug and Internal Usage";
+
+    detail::get_value(a_ini, iSparkSpawn, section, "SpawnSparkFrame",
+                      "; For how many frames after collision do we continue to spawn sparks. \n" 
+        "; Spark is spawned every 4 frames. So a number 12 means spawning 3 sparks. Default:\"10\"");
 
     detail::get_value(
         a_ini, bEnableTrace, section, "EnableTrace",
@@ -288,7 +326,7 @@ void Settings::Technique::Load(CSimpleIniA& a_ini) {
     detail::get_value(
         a_ini, collisionIgnoreDur, section, "collisionIgnoreDur",
         "; After a collision, for how many frames should we ignore following collisions of the same enemy.\n"
-        "; A value too low creates lots of collision for each parry. Default:\"30\"");
+        "; A value too low creates lots of collision for each parry. Default:\"60\"");
 
     detail::get_value(
         a_ini, collisionEffectDurEnemyShort, section, "NullifyEnemyAllAttackFrames",
@@ -306,6 +344,6 @@ void Settings::Technique::Load(CSimpleIniA& a_ini) {
         "; because in Skyrim enemies have some cheating attack animations, where they hit you a few frames before their weapon reaches you\n"
         "; These attack animations are unfairly hard to parry. A delay for 6 frames is nearly unnoticeable and fixes this problem.\n"
         "; Decrease it if your framerate is below 60fps. Let me know if this feature causes any trouble to other mods.\n"
-        "; Default:\"6\"");
+        "; Default:\"9\"");
 }
     
