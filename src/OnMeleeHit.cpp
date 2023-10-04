@@ -32,7 +32,7 @@ void OnMeleeHitHook::OnMeleeHit(RE::Actor* hit_causer, RE::Actor* hit_target, st
                                 void* a_unkptr) {
     //log::trace("Hit causer:{}. Target:{}", hit_causer->GetDisplayFullName(),
     //           hit_target->GetDisplayFullName());
-    if (bEnableWholeMod) {
+    if (bEnableWholeMod && iDelayEnemyHit > 0) {
         auto playerAA = RE::PlayerCharacter::GetSingleton();
         if (playerAA) {
             auto playerActor = static_cast<RE::Actor*>(playerAA);
@@ -157,27 +157,4 @@ bool OnMeleeHit::play_impact_2(RE::TESObjectREFR* a, RE::BGSImpactData* impact, 
 bool OnMeleeHit::play_impact_3(RE::TESObjectCELL* cell, float a_lifetime, const char* model, RE::NiPoint3* a_rotation,
                                RE::NiPoint3* a_position, float a_scale, uint32_t a_flags, RE::NiNode* a_target) {
     return RE::BSTempEffectParticle::Spawn(cell, a_lifetime, model, *a_rotation, *a_position, a_scale, a_flags, a_target);
-}
-
-PRECISION_API::WeaponCollisionCallbackReturn OnMeleeHit::PrecisionWeaponsCallback(
-    const PRECISION_API::PrecisionHitData& a_precisionHitData) {
-
-    auto hit_causer = a_precisionHitData.attacker;
-    auto hit_target = a_precisionHitData.target == nullptr ? nullptr : a_precisionHitData.target->As<RE::Actor>();
-
-
-    PRECISION_API::WeaponCollisionCallbackReturn ret;
-    ret.bIgnoreHit = false;
-    return ret;
-}
-
-bool OnMeleeHit::play_impact_precision(RE::Actor* actor, const RE::BSFixedString& nodeName, RE::NiPoint3& hitPos) {
-    auto root = netimmerse_cast<RE::BSFadeNode*>(actor->Get3D());
-    if (!root) return false;
-    auto bone = netimmerse_cast<RE::NiNode*>(root->GetObjectByName(nodeName));
-    if (!bone) return false;
-
-    RE::NiPoint3 P_V = {0.0f, 0.0f, 0.0f};
-
-    return play_impact_2(actor, RE::TESForm::LookupByID<RE::BGSImpactData>(0x0004BB52), &P_V, &hitPos, bone);
 }

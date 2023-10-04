@@ -1,7 +1,6 @@
 #pragma once
 
 #include <RE/Skyrim.h>
-#include "PrecisionAPI.h"
 #include "Settings.h"
 
 using namespace SKSE;
@@ -42,6 +41,12 @@ public:
 
     OriMeleeQueue(std::size_t cap) : buffer(cap), capacity(cap), indexCurrent(0) {}
 
+    void Clear() {
+        for (std::size_t i = 0; i < capacity; i++) {
+            buffer[i].shouldHitFrame = -1;
+        }
+    }
+
     void PushCopy(OriMeleeHit h) { 
         log::trace("In OriMeleeQueue::PushCopy");
         buffer[indexCurrent] = h;
@@ -57,6 +62,9 @@ public:
         std::size_t i = indexCurrent;
         do {
             i = (i == 0) ? capacity - 1 : i - 1;
+            if (buffer[i].shouldHitFrame == -1) continue;
+            log::trace("-{}- buffer[{}].shouldHitFrame == {}, caused by {}", currentFrame, i, buffer[i].shouldHitFrame,
+                       buffer[i].hit_causer->GetDisplayFullName());
             if (buffer[i].shouldHitFrame == currentFrame) {
                 return &buffer[i];
             }
@@ -168,12 +176,7 @@ namespace OnMeleeHit {
         return func(a1, x, y, z);
     }
 
-    // For Precision compatibility:
-    PRECISION_API::WeaponCollisionCallbackReturn PrecisionWeaponsCallback(
-        const PRECISION_API::PrecisionHitData& a_precisionHitData);
-
-    // A modified version of fenix31415's play_impact code which uses Precision's hit location
-    bool play_impact_precision(RE::Actor* actor, const RE::BSFixedString& nodeName, RE::NiPoint3& hitPos);
+  
 
 #pragma warning(pop)
 }  // namespace OnMeleeHit

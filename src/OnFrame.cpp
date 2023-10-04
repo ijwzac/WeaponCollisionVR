@@ -3,6 +3,7 @@
 #include "OnFrame.h"
 #include "Settings.h"
 #include "OnMeleeHit.h"
+#include <chrono>
 
 using namespace SKSE;
 using namespace SKSE::log;
@@ -22,7 +23,18 @@ void ZacOnFrame::InstallFrameHook() {
         trampoline.write_call<5>(OnFrameBase.address() + REL::Relocate(0x748, 0xc26, 0x7ee), ZacOnFrame::OnFrameUpdate);
 }
 
+bool isOurFnRunning = false;
+long long highest_run_time = 0;
+
+// I am trying a not very normal approach here: fire the original event first
 void ZacOnFrame::OnFrameUpdate() {
+
+    if (isOurFnRunning) {
+        log::warn("Our functions are running in parallel!!!"); // Not seen even when stress testing. Keep observing
+    }
+    isOurFnRunning = true;
+    // Get the current time point
+    auto now = std::chrono::high_resolution_clock::now();
     if (bEnableWholeMod) {
         if (const auto ui{RE::UI::GetSingleton()}) {
             if (!ui->GameIsPaused()) {  // Not in menu, not in load, not in console
@@ -33,10 +45,27 @@ void ZacOnFrame::OnFrameUpdate() {
             }
         }
     }
-    
+    // Convert time point to since epoch (duration)
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - now);
+
+    isOurFnRunning = false;
+
+    // Display the microseconds since epoch
+    if (highest_run_time < duration.count()) highest_run_time = duration.count();
+    log::info("Exe time of our fn:{} us. Highest:{}", duration.count(),
+               highest_run_time);  
+    // Tested on 0.9.0 version. Normally takes around 30us when in combat. 0us when not. Highest: 240us
+    //                  Stress test with 20 enemies: 60us, highest:1500us. 
+    //                  Turning trace on slows down average speed by around 2X
+    //                  Debug version is like 10X slower, but highest doesn't change much
+
+
     
     ZacOnFrame::_OnFrame();  // TODO: figure out why the game works fine without this line
-                 // Anyway, we should always call it
+                             // Anyway, we should always call it
+                             // This function takes 0 us. Very fast
+                                // TODO: see if we place it here, can the spider save crash again?
 }
 
 void ZacOnFrame::CollisionDetection() {
@@ -57,25 +86,26 @@ void ZacOnFrame::CollisionDetection() {
         log::warn("Fail to cast player to ObjRef");
         return;
     }
-    if (!playerActor->IsInCombat()) { // Note: Combat state is not related to whether player sheathe weapons
-        log::trace("Player not in combat");
-        return;
-    }
 
     if (!playerActor->Is3DLoaded()) {
         log::warn("Player not 3D loaded. Shouldn't happen");
         return;
     }
 
+    if (slowTimeData.shouldRemove(iFrameCount)) {
+        StopTimeSlowEffect(playerActor);
+    }
+
+
     // See if we need to fire a delayed melee event
-    log::trace("About to check meleeQueue");
+    // log::trace("About to check meleeQueue");
     auto lastMeleeHit = meleeQueue.GetMatchOriMelee(iFrameCount);
     while (lastMeleeHit) {
         lastMeleeHit->shouldHitFrame = -1;  // this doesn't delete it, but won't be used and will eventually be cleared
         log::trace("Handling a delayed hit");
         if (lastMeleeHit->hit_causer) {
             auto col = colBuffer.GetThisEnemyLatestCollision(lastMeleeHit->hit_causer);
-            if (col && !col->shouldNullifyEnemyCurretHit()) {
+            if ((col && !col->shouldNullifyEnemyCurretHit()) || col == nullptr) {
                 log::trace("A delayed hit is fired");
                 OnMeleeHit::OnMeleeHitHook::GetSingleton().FireOriMeleeHit(
                     lastMeleeHit->hit_causer, lastMeleeHit->hit_target, lastMeleeHit->a_int1, lastMeleeHit->a_bool,
@@ -84,13 +114,19 @@ void ZacOnFrame::CollisionDetection() {
         }
         lastMeleeHit = meleeQueue.GetMatchOriMelee(iFrameCount);
     }
-    log::trace("Finished checking meleeQueue");
+    // log::trace("Finished checking meleeQueue");
 
     // Spawn spark on player's weapon and push player away. These functions check frame count internally, so they only act if there is a recent collision
     auto playerCol = PlayerCollision::GetSingleton();
     if (!playerCol->IsEmpty()) {
         playerCol->SpawnSpark();
         playerCol->ChangeVelocity();
+    }
+
+    
+    if (!playerActor->IsInCombat()) {  // Note: Combat state is not related to whether player sheathe weapons
+        log::trace("Player not in combat");
+        return;
     }
     
     // Get player's weapons
@@ -147,8 +183,15 @@ void ZacOnFrame::CollisionDetection() {
             if (actorNPC == playerActor || actorNPC->IsDead()) {
                 continue;
             }
-            logger::trace("Cast success and not player or dead. Name:{}", actorNPC->GetBaseObject()->GetName());
+            logger::trace("A nearby actor. Name:{}. Baseform:{:x}. Race:{:x}", actorNPC->GetBaseObject()->GetName(),
+                          actorNPC->GetBaseObject()->formID, actorNPC->GetRace()->formID);
 
+            if (bShowEnemyWeaponSegment) {
+                // for debug, we call the function below to get the effect spawning on enemy's weapons
+                RE::NiPoint3 tmp1, tmp2, tmp3, tmp4;
+                tmp1.x = 1234.0f;
+                FrameGetWeaponPos(actorNPC, tmp1, tmp2, tmp3, tmp4, false);
+            }
             // See if a recent collision happens to this actor
             Collision* recentCol = colBuffer.GetThisEnemyLatestCollision(actorNPC);
             if (recentCol) {
@@ -207,9 +250,9 @@ void ZacOnFrame::CollisionDetection() {
             }
 
             RE::NiPoint3 tmp1, tmp2, posEnemyHandL, posEnemyHandR; 
-            if (!FrameGetWeaponFixedPos(playerActor, tmp1, tmp2, posEnemyHandL, posEnemyHandR)) {
-                log::warn("Fail to get player's fixed point pos");
-                return;
+            if (!FrameGetWeaponFixedPos(actorNPC, tmp1, tmp2, posEnemyHandL, posEnemyHandR)) {
+                log::warn("Fail to get enemy's fixed point pos");
+                continue;
             }
 
             // See if player's weapon collides with enemies' weapons
@@ -230,33 +273,77 @@ void ZacOnFrame::CollisionDetection() {
             bool isCollision = false;
             bool isEnemyLeft = false;
             bool isPlayerLeft = false;
-            ;
-            if (dis_playerL_enemyL.dist < fCollisionDistThres) {
+            
+            // If the enemy is special race, change the distThres
+            auto distThres = fCollisionDistThres;
+            int specialRace = GetSpecialRace(actorNPC);
+            switch (specialRace) {
+                case 1: // dwenmer sphere
+                    if (distThres < 25.0f) distThres = 25.0f;
+                    break;
+                case 2: // races that only use mouth as weapon: wolf, skeevers
+                    if (distThres < 15.0f) distThres = 15.0f;
+                    break;
+                case 3:  // races that use claws: werewolf or werebear or trolls or bears or hagraven
+                    if (distThres < 25.0f) distThres = 25.0f;
+                    break;
+                case 5: // cats
+                    if (distThres < 25.0f) distThres = 25.0f;
+                    break;
+                case 6: // dwenmer spider
+                    if (distThres < 20.0f) distThres = 20.0f;
+                    break;
+                //case 7:  // frostbite spider
+                //    if (distThres < 20.0f) distThres = 20.0f;
+                //    break;
+                case 0:
+                    break;
+                case -1:
+                    log::error("Fail to get special race because actor or race is null");
+                    return;
+                default:
+                    break;
+            }
+
+            // Now detect collision
+            if (dis_playerL_enemyL.dist < distThres) {
                 isCollision = true;
                 isEnemyLeft = true;
                 isPlayerLeft = true;
                 contactPos = dis_playerL_enemyL.contactPoint;
                 contactToPlayerHand = contactPos.GetDistance(posPlayerHandL);
                 contactToEnemyHand = contactPos.GetDistance(posEnemyHandL);
-            } else if (dis_playerL_enemyR.dist < fCollisionDistThres) {
+            } else if (dis_playerL_enemyR.dist < distThres) {
                 isCollision = true;
                 isPlayerLeft = true;
                 contactPos = dis_playerL_enemyR.contactPoint;
                 contactToPlayerHand = contactPos.GetDistance(posPlayerHandL);
                 contactToEnemyHand = contactPos.GetDistance(posEnemyHandR);
-            } else if (dis_playerR_enemyL.dist < fCollisionDistThres) {
+            } else if (dis_playerR_enemyL.dist < distThres) {
                 isCollision = true;
                 isEnemyLeft = true;
                 contactPos = dis_playerR_enemyL.contactPoint;
                 contactToPlayerHand = contactPos.GetDistance(posPlayerHandR);
                 contactToEnemyHand = contactPos.GetDistance(posEnemyHandL);
-            } else if (dis_playerR_enemyR.dist < fCollisionDistThres) {
+            } else if (dis_playerR_enemyR.dist < distThres) {
                 isCollision = true;
                 contactPos = dis_playerR_enemyR.contactPoint;
                 contactToPlayerHand = contactPos.GetDistance(posPlayerHandR);
                 contactToEnemyHand = contactPos.GetDistance(posEnemyHandR);
             } 
             if (isCollision) {
+
+                if (fPlayerStaUnableParryThresPer > 0.0f && playerActor->AsActorValueOwner()) {
+                    auto playerCurSta = playerActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kStamina);
+                    if (playerCurSta <
+                        fPlayerStaUnableParryThresPer *
+                            playerActor->AsActorValueOwner()->GetPermanentActorValue(RE::ActorValue::kStamina)) {
+                        log::trace("Player current stamina is not enough for parry. Stamina:{}", playerCurSta);
+                        RE::DebugNotification("Stamina not enough for parry");
+                        return;
+                    }
+                }
+
                 // create a new collision
                 auto speed = speedBuf.GetVelocity(5, isPlayerLeft).SqrLength();
 
@@ -301,7 +388,94 @@ void ZacOnFrame::CollisionDetection() {
     // Create collision data
 }
 
+void ZacOnFrame::TimeSlowEffect(RE::Actor* playerActor, int64_t slowFrame) { 
+    if (slowFrame <= 0 || fTimeSlowRatio >= 1.0f || fTimeSlowRatio <= 0.0f) {
+        log::trace("Due to settings, no time slow effect");
+        return;
+    }
+
+    if (slowTimeData.timeSlowSpell == nullptr) {
+        RE::SpellItem* timeSlowSpell = GetTimeSlowSpell();
+        if (!timeSlowSpell) {
+            log::error("TimeSlowEffect: failed to get timeslow spell");
+            return;
+        }
+        slowTimeData.timeSlowSpell = timeSlowSpell;
+    }
+
+    if (playerActor->HasSpell(slowTimeData.timeSlowSpell)) {
+        log::trace("TimeSlowEffect: Spell wheel or us are already slowing time, don't do anything");
+        return;
+    }
+    
+    if (slowTimeData.oldMagnitude.size() > 0) {
+        log::error("TimeSlowEffect: slowTimeData.oldMagnitude.size() is not zero:{}", slowTimeData.oldMagnitude.size());
+        return;
+    }
+
+    // Record spell magnitude
+    if (slowTimeData.timeSlowSpell->effects.size() == 0) {
+        log::error("TimeSlowEffect: timeslow spell has 0 effect");
+        return;
+    }
+
+    slowTimeData.frameShouldRemove = iFrameCount + slowFrame;
+
+    for (RE::BSTArrayBase::size_type i = 0; i < slowTimeData.timeSlowSpell->effects.size(); i++) {
+        auto effect = slowTimeData.timeSlowSpell->effects.operator[](i);
+        if (!effect) {
+            log::trace("TimeSlowEffect: effect[{}] is null", i);
+            continue;
+        }
+        float oldmag = effect->effectItem.magnitude;
+        slowTimeData.oldMagnitude.push_back(oldmag); // store the existing magnitude, which are set by spell wheel
+        effect->effectItem.magnitude = fTimeSlowRatio; // set our magnitude
+    }
+
+    // Apply spell to player. Now time slow will take effect
+    playerActor->AddSpell(slowTimeData.timeSlowSpell);
+    log::trace("time slow takes effect", fTimeSlowRatio);
+}
+
+void ZacOnFrame::StopTimeSlowEffect(RE::Actor* playerActor) {
+    if (slowTimeData.timeSlowSpell == nullptr) {
+        log::error("StopTimeSlowEffect: timeslow spell is null. Doesn't make sense");
+        return;
+    }
+
+    if (!playerActor->HasSpell(slowTimeData.timeSlowSpell)) {
+        log::warn("StopTimeSlowEffect: player already doesn't have timeslow spell. Probably removed by spellwheel");
+        slowTimeData.clear();
+        return;
+    }
+
+    // Remove spell from player. Now time slow should stop
+    playerActor->RemoveSpell(slowTimeData.timeSlowSpell);
+    log::trace("time slow stops", fTimeSlowRatio);
+
+    // Restore the effects to the magnitude that spellwheel set
+    if (slowTimeData.timeSlowSpell->effects.size() == 0) {
+        log::error("StopTimeSlowEffect: timeslow spell has 0 effect");
+        return;
+    }
+    for (RE::BSTArrayBase::size_type i = 0; i < slowTimeData.timeSlowSpell->effects.size(); i++) {
+        auto effect = slowTimeData.timeSlowSpell->effects.operator[](i);
+        if (!effect) {
+            log::trace("StopTimeSlowEffect: effect[{}] is null", i);
+            continue;
+        }
+        if (i < slowTimeData.oldMagnitude.size() && i >= 0) {
+            effect->effectItem.magnitude = slowTimeData.oldMagnitude[i];
+        } else {
+            log::error("StopTimeSlowEffect: out of boundary. Index: {}. size:{}", i, slowTimeData.oldMagnitude.size());
+        }
+    }
+
+    slowTimeData.clear();
+}
+
 void ZacOnFrame::CollisionEffect(RE::Actor* playerActor, RE::Actor* enemyActor, RE::NiPoint3 contactPos, bool isEnemyLeft, bool isPlayerLeft) {
+   
     const auto nodeName = isEnemyLeft?
         "SHIELD"sv: "WEAPON"sv;
     auto rootEnemy = netimmerse_cast<RE::BSFadeNode*>(enemyActor->Get3D());
@@ -334,10 +508,12 @@ void ZacOnFrame::CollisionEffect(RE::Actor* playerActor, RE::Actor* enemyActor, 
     // if enemy is power attacking, double sta cost to player
     bool isEnemyPower = false;
     if (auto enemyAI = enemyActor->GetActorRuntimeData().currentProcess; enemyAI) {
-        if (enemyAI->high && enemyAI->high->attackData &&
-            enemyAI->high->attackData->data.flags.any(RE::AttackData::AttackFlag::kPowerAttack)) {
-            isEnemyPower = true;
-            log::trace("Enemy is power attacking!");
+        if (enemyAI->high && enemyAI->high->attackData) {
+            if (enemyAI->high->attackData->data.flags.any(RE::AttackData::AttackFlag::kPowerAttack)) {
+                isEnemyPower = true;
+            }
+            log::trace("Enemy attack damageMult:{}. Is power:{}", enemyAI->high->attackData->data.damageMult, isEnemyPower);
+            
         }
     }
     // if player is power attacking, double sta cost to player
@@ -359,7 +535,7 @@ void ZacOnFrame::CollisionEffect(RE::Actor* playerActor, RE::Actor* enemyActor, 
         return;
     } 
     auto enemyCurSta = enemyActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kStamina);
-    uint16_t playerDamage(5), enemyDamage(5); // 5 for unhanded
+    uint16_t playerDamage(5), enemyDamage(5), oriDmg(0);  // 5 for unhanded
     if (playerActor->GetEquippedObject(isPlayerLeft)) {
         if (auto weap = playerActor->GetEquippedObject(isPlayerLeft)->As<RE::TESObjectWEAP>(); weap) {
             playerDamage = weap->attackDamage > playerDamage ? weap->attackDamage: playerDamage;
@@ -384,7 +560,7 @@ void ZacOnFrame::CollisionEffect(RE::Actor* playerActor, RE::Actor* enemyActor, 
     if (enemyActor->GetEquippedObject(isEnemyLeft)) {
         if (auto weap = enemyActor->GetEquippedObject(isEnemyLeft)->As<RE::TESObjectWEAP>(); weap) {
             enemyDamage = weap->attackDamage > enemyDamage ? weap->attackDamage : enemyDamage;
-            auto oriDmg = enemyDamage;
+            oriDmg = enemyDamage;
             if (IsOneHandWeap(enemyActor, isEnemyLeft))
                 enemyDamage =
                     (uint16_t)((float)enemyDamage *
@@ -395,10 +571,21 @@ void ZacOnFrame::CollisionEffect(RE::Actor* playerActor, RE::Actor* enemyActor, 
                     (uint16_t)((float)enemyDamage *
                                (1.0f +
                                 enemyActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kTwoHanded) / 100.0f));
-            log::trace("Enemy damage: {}. Ori damage: {}", enemyDamage, oriDmg);
         }
     }
-    float enemyStaCost = fEnemyStaCostWeapMulti * (float) ( 1.5 * playerDamage - enemyDamage);
+    auto enemyActorMeleeDamage =
+        enemyActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kMeleeDamage) *
+        enemyActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kAttackDamageMult) * 0.7;  // for special races, but seems 0
+    enemyDamage = enemyDamage > enemyActorMeleeDamage ? enemyDamage : enemyActorMeleeDamage;
+    auto enemyActorUnArmedDamage =
+        enemyActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kUnarmedDamage) *
+                                   enemyActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kAttackDamageMult) *
+                                   0.7;  // for special races. 
+    enemyDamage = enemyDamage > enemyActorUnArmedDamage ? enemyDamage : enemyActorUnArmedDamage;
+    log::trace("Damage of enemy. Final: {}. Ori: {}. Melee:{}. Unarmed:{}", enemyDamage, oriDmg, enemyActorMeleeDamage,
+               enemyActorUnArmedDamage);
+
+    float enemyStaCost = fEnemyStaCostWeapMulti * (float) ( 2.0 * playerDamage - enemyDamage);
     if (isPlayerPower && !isEnemyPower) {
         enemyStaCost *= 2;
     }
@@ -421,27 +608,27 @@ void ZacOnFrame::CollisionEffect(RE::Actor* playerActor, RE::Actor* enemyActor, 
     auto speed = speedBuf.GetVelocity(5, isPlayerLeft).SqrLength();
     log::trace("Player moving their weapon at speed:{}", speed);
     if (isPlayerPower || speed > fEnemyLargeRecoilVelocityThres) {
-        enemyActor->NotifyAnimationGraph("recoilStop");
-        enemyActor->NotifyAnimationGraph("AttackStop");
-        enemyActor->NotifyAnimationGraph("recoilLargeStart");
+        RecoilEffect(enemyActor, 2);
+        TimeSlowEffect(playerActor, iTimeSlowFrameLargeRecoil);
     } else if (speed > fEnemyStopVelocityThres) {
-        enemyActor->NotifyAnimationGraph("recoilStop");
-        enemyActor->NotifyAnimationGraph("AttackStop");
+        RecoilEffect(enemyActor, 1);
+        TimeSlowEffect(playerActor, iTimeSlowFrameStop);
     } else if (enemyFinalSta < // Enemy recoil based on stamina
         fEnemyStaLargeRecoilThresPer *
                             enemyActor->AsActorValueOwner()->GetPermanentActorValue(RE::ActorValue::kStamina)) {
-         enemyActor->NotifyAnimationGraph("recoilStop");
-         enemyActor->NotifyAnimationGraph("AttackStop");
-         enemyActor->NotifyAnimationGraph("recoilLargeStart");
+        RecoilEffect(enemyActor, 2);
+        TimeSlowEffect(playerActor, iTimeSlowFrameLargeRecoil);
     } else if (enemyFinalSta < fEnemyStaStopThresPer *
                                    enemyActor->AsActorValueOwner()->GetPermanentActorValue(RE::ActorValue::kStamina)) {
-            enemyActor->NotifyAnimationGraph("recoilStop");
-            enemyActor->NotifyAnimationGraph("AttackStop");
+        RecoilEffect(enemyActor, 1);
+        TimeSlowEffect(playerActor, iTimeSlowFrameStop);
+    } else {
+        TimeSlowEffect(playerActor, iTimeSlowFrameNormal);
     }
 
     // Player stamina cost
     auto playerCurSta = playerActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kStamina);
-    float playerStaCost = fPlayerStaCostWeapMulti * (float)(1.5 * enemyDamage - playerDamage);
+    float playerStaCost = fPlayerStaCostWeapMulti * (float)(2.0 * enemyDamage - playerDamage);
     if (isEnemyPower && !isPlayerPower) playerStaCost *= 2;
     playerStaCost = playerStaCost < fPlayerStaCostMin ? fPlayerStaCostMin : playerStaCost;
     playerStaCost = playerStaCost > fPlayerStaCostMax ? fPlayerStaCostMax : playerStaCost;
@@ -486,6 +673,7 @@ void ZacOnFrame::CollisionEffect(RE::Actor* playerActor, RE::Actor* enemyActor, 
 
         log::trace("Calling papyrus");
         if (papyrusVM->TypeIsValid("VRIK"sv)) {
+            log::trace("VRIK is installed");
             RE::BSScript::IFunctionArguments* hapticArgs;
             if (isPlayerLeft) {
                 hapticArgs = RE::MakeFunctionArguments(true, (int)hapticFrame, (int)iHapticLengthMicroSec);
@@ -537,8 +725,15 @@ void ZacOnFrame::CollisionEffect(RE::Actor* playerActor, RE::Actor* enemyActor, 
 void debug_show_weapon_range(RE::Actor* actor, RE::NiPoint3& posWeaponBottom, RE::NiPoint3& posWeaponTop,
                              RE::NiNode* bone) {
     RE::NiPoint3 P_V = {0.0f, 0.0f, 0.0f};
-    OnMeleeHit::play_impact_2(actor, RE::TESForm::LookupByID<RE::BGSImpactData>(0x0004BB54), &P_V, &posWeaponTop, bone);
-    OnMeleeHit::play_impact_2(actor, RE::TESForm::LookupByID<RE::BGSImpactData>(0x0004BB54), &P_V, &posWeaponBottom, bone);
+    if (iFrameCount % 3 == 0 && iFrameCount % 6 != 0) {
+        OnMeleeHit::play_impact_2(actor, RE::TESForm::LookupByID<RE::BGSImpactData>(0x0004BB52), &P_V, &posWeaponTop,
+                                  bone);
+    } else if (iFrameCount % 3 == 0 && iFrameCount % 6 == 0) {
+        OnMeleeHit::play_impact_2(actor, RE::TESForm::LookupByID<RE::BGSImpactData>(0x0004BB52), &P_V, &posWeaponBottom,
+                                  bone);
+    }
+    
+    
 }
 
 
@@ -548,6 +743,8 @@ void debug_show_weapon_range(RE::Actor* actor, RE::NiPoint3& posWeaponBottom, RE
 bool ZacOnFrame::FrameGetWeaponPos(RE::Actor* actor, RE::NiPoint3& posWeaponBottomL, RE::NiPoint3& posWeaponBottomR,
                        RE::NiPoint3& posWeaponTopL,
                        RE::NiPoint3& posWeaponTopR, bool isPlayer) {
+    bool bDisplayEnemySegmentCheck = posWeaponBottomL.x == 1234.0f; // a magic number to prevent showing effect twice
+
     const auto actorRoot = netimmerse_cast<RE::BSFadeNode*>(actor->Get3D());
     if (!actorRoot) {
         log::warn("Fail to find actor:{}", actor->GetBaseObject()->GetName());
@@ -571,10 +768,33 @@ bool ZacOnFrame::FrameGetWeaponPos(RE::Actor* actor, RE::NiPoint3& posWeaponBott
     bool isEquipL(false), isEquipR(false), isBow(false), isTwoHandedAxe(false), isWarHammer(false),
         isGreatSword(false), hasShield(false), isSwordL(false), isSwordR(false), isAxeL(false), isAxeR(false),
         isMaceL(false), isMaceR(false), isStaffL(false), isStaffR(false), isFistL(false), isFistR(false),
-        isDaggerL(false), isDaggerR(false);
+        isDaggerL(false), isDaggerR(false), hasGauntlet(false);
+    if (isPlayer) {
+        // if player is wearing any gauntlet
+        auto armo = actor->GetWornArmor(RE::BIPED_MODEL::BipedObjectSlot::kHands);
+        if (armo) {
+            log::trace("Player hands armor:{}", armo->GetFullName());
+            if (bPlayerCheckHeavyGauntlet && armo->IsHeavyArmor()) {
+                hasGauntlet = true;
+            }
+        } else {
+            armo = actor->GetWornArmor(RE::BIPED_MODEL::BipedObjectSlot::kForearms);
+            if (armo) {
+                log::trace("Player forearms armor:{}", armo->GetFullName());
+                if (bPlayerCheckHeavyGauntlet && armo->IsHeavyArmor()) {
+                    hasGauntlet = true;
+                }
+            }
+        }
+    }
+    if (!bPlayerCheckHeavyGauntlet) {
+        hasGauntlet = true;
+    }
+
     if (auto equipR = actor->GetEquippedObject(false); equipR) {
         isEquipR = true;
         if (auto equipWeapR = equipR->As<RE::TESObjectWEAP>(); equipWeapR) {
+            log::trace("Player equipWeapR form:{}. Is hand:{}", equipWeapR->formID, equipWeapR->IsHandToHandMelee());
             if (equipWeapR->HasKeywordString("WeapTypeDagger")) {
                 isDaggerR = true;
             } else if (equipWeapR->HasKeywordString("WeapTypeMace")) {
@@ -585,15 +805,35 @@ bool ZacOnFrame::FrameGetWeaponPos(RE::Actor* actor, RE::NiPoint3& posWeaponBott
                 isAxeR = true;
             } else if (equipWeapR->IsStaff()) {
                 isStaffR = true;
+            } else if (equipWeapR->IsHandToHandMelee()) {
+                if (isPlayer) {
+                    // if player is wearing any gauntlet, set fist to true
+                    isFistR = hasGauntlet;
+                } 
             }
         }
     } else {
-        // fist
-        isFistR = true;
+        if (isPlayer) {
+            // if player is wearing any gauntlet, set fist to true
+            isFistR = hasGauntlet;
+        } else {
+            // We have more restrict ways to check if enemy is using fist
+            RE::AIProcess* const attackerAI = actor->GetActorRuntimeData().currentProcess;
+            if (attackerAI) {
+                const RE::TESForm* equipped = attackerAI->GetEquippedRightHand();
+                if (equipped) {
+                    auto weapHand = equipped->As<RE::TESObjectWEAP>();
+                    if (weapHand && weapHand->IsHandToHandMelee()) {
+                        isFistR = true;
+                    }
+                }
+            }
+        }
     }
     if (auto equipL = actor->GetEquippedObject(true); equipL) {
         isEquipL = true;
         if (auto equipWeapL = equipL->As<RE::TESObjectWEAP>(); equipWeapL) {
+            log::trace("Player equipWeaLR form:{}. Is hand:{}", equipWeapL->formID, equipWeapL->IsHandToHandMelee());
             if (equipWeapL->IsBow()) {
                 isBow = true;
                 isEquipL = true;
@@ -620,105 +860,213 @@ bool ZacOnFrame::FrameGetWeaponPos(RE::Actor* actor, RE::NiPoint3& posWeaponBott
                 isAxeL = true;
             } else if (equipWeapL->IsStaff()) {
                 isStaffL = true;
+            } else if (equipWeapL->IsHandToHandMelee()) {
+                if (isPlayer) {
+                    // if player is wearing any gauntlet, set fist to true
+                    isFistL = hasGauntlet;
+                }
             }
         }
         if (equipL->IsArmor()) {
             hasShield = true;
         }
     } else {
-        // fist
-        isFistL = true;
+        if (isPlayer) {
+            // if player is wearing any gauntlet, set fist to true
+            isFistL = hasGauntlet;
+        } else {
+            // We have more restrict ways to check if enemy is using fist
+            RE::AIProcess* const attackerAI = actor->GetActorRuntimeData().currentProcess;
+            if (attackerAI) {
+                const RE::TESForm* equipped = attackerAI->GetEquippedLeftHand();
+                if (equipped) {
+                    auto weapHand = equipped->As<RE::TESObjectWEAP>();
+                    if (weapHand && weapHand->IsHandToHandMelee()) {
+                        isFistL = true;
+                    }
+                }
+            }
+        }
     }
 
-    if (!hasShield && weaponL && (isEquipL || (isFistL && isFistR))) { // only enable fist collision when both hands are fist
+    log::trace("isFistL:{}, isFistR:{}", isFistL, isFistR);
+
+    // Handling some special actors
+    // 1. Dwenmer sphere. Gotta say this is still not good: the adjust matrix works fine when they stand, but when they attack their weapon is quite off
+    auto weapDSphere = HandleDwenmerSphere(actor, posWeaponBottomL, posWeaponBottomR, posWeaponTopL, posWeaponTopR);
+    if (weapDSphere) { 
+        if (bShowEnemyWeaponSegment && !isPlayer && bDisplayEnemySegmentCheck) {
+            debug_show_weapon_range(actor, posWeaponBottomR, posWeaponTopR, weapDSphere);
+        }
+    }
+    // 2. Races that use mouth as their weapon: wolf, skeever
+    auto weapWolfHead = HandleMouthRace(actor, posWeaponBottomL, posWeaponBottomR, posWeaponTopL, posWeaponTopR);
+    if (weapWolfHead) {
+        if (bShowEnemyWeaponSegment && !isPlayer && bDisplayEnemySegmentCheck) {
+            debug_show_weapon_range(actor, posWeaponBottomR, posWeaponTopR, weapWolfHead);
+        }
+    }
+    // 3. Races that use claws as weapon Werewolf or werebear or troll or bear or spriggan or hagraven
+    twoNodes claws = HandleClawRaces(actor, posWeaponBottomL, posWeaponBottomR, posWeaponTopL, posWeaponTopR);
+    if (!claws.isEmpty()) {
+        if (bShowEnemyWeaponSegment && !isPlayer && bDisplayEnemySegmentCheck) {
+            debug_show_weapon_range(actor, posWeaponBottomR, posWeaponTopR, claws.nodeR);
+            debug_show_weapon_range(actor, posWeaponBottomL, posWeaponTopL, claws.nodeL);
+        }
+    }
+    // 4. Dwenmer Centurion. Can't parry
+    if (GetSpecialRace(actor) == 4) {
+        return true;
+    }
+    // 5. Cats. Use their right claw and head as weapons
+    twoNodes clawAndHead =
+        HandleClawAndHeadRaces(actor, posWeaponBottomL, posWeaponBottomR, posWeaponTopL, posWeaponTopR);
+    if (!clawAndHead.isEmpty()) {
+        if (bShowEnemyWeaponSegment && !isPlayer && bDisplayEnemySegmentCheck) {
+            debug_show_weapon_range(actor, posWeaponBottomR, posWeaponTopR, clawAndHead.nodeR);
+            debug_show_weapon_range(actor, posWeaponBottomL, posWeaponTopL, clawAndHead.nodeL);
+        }
+    }
+    // 6. Dwenmer spider. Use their right leg and a right pincher as weapons. left let and pincher can't be parried
+    twoNodes DWorkerLegs = HandleDwenmerSpider(actor, posWeaponBottomL, posWeaponBottomR, posWeaponTopL, posWeaponTopR);
+    if (!DWorkerLegs.isEmpty()) {
+        if (bShowEnemyWeaponSegment && !isPlayer && bDisplayEnemySegmentCheck) {
+            debug_show_weapon_range(actor, posWeaponBottomR, posWeaponTopR, DWorkerLegs.nodeR);
+            debug_show_weapon_range(actor, posWeaponBottomL, posWeaponTopL, DWorkerLegs.nodeL);
+        }
+    }
+    // 7. Frostbite spider. Use their right claw and mouth as weapons. left claw can't be parried
+    // Disabled. Feels strange in game to parry their mouth
+    twoNodes FSpiderClaws = twoNodes(nullptr, nullptr);
+    //twoNodes FSpiderClaws = HandleFrostSpider(actor, posWeaponBottomL, posWeaponBottomR, posWeaponTopL, posWeaponTopR);
+    //if (!FSpiderClaws.isEmpty()) {
+    //    if (bShowEnemyWeaponSegment && !isPlayer && bDisplayEnemySegmentCheck) {
+    //        debug_show_weapon_range(actor, posWeaponBottomR, posWeaponTopR, FSpiderClaws.nodeR);
+    //        debug_show_weapon_range(actor, posWeaponBottomL, posWeaponTopL, FSpiderClaws.nodeL);
+    //    }
+    //}
+
+
+    // Handling normal humanoid actors
+    if (!weapDSphere && !weapWolfHead && claws.isEmpty() && clawAndHead.isEmpty() && DWorkerLegs.isEmpty() &&
+        FSpiderClaws.isEmpty()
+        && !hasShield && weaponL 
+        && (isEquipL || (isFistL && isFistR) ) &&
+        !(!isPlayer && isBow) && !(!isPlayer && isStaffL)  // ignore enemy's bow and staff
+        ) { // only enable fist collision when both hands are fist
         float reachL(0.0f), handleL(0.0f);
         if (isFistL) { 
             reachL = 10.0f;
             handleL = 10.0f;
+            log::trace("Left: fist. actor:{}", actor->GetBaseObject()->GetName());
         } else if (isBow) { // OK
             reachL = 70.0f;
             handleL = 70.0f;
+            log::trace("Left: bow. actor:{}", actor->GetBaseObject()->GetName());
         } else if (isDaggerL) { // OK
             reachL = 20.0f;
             handleL = 10.0f;
+            log::trace("Left: dagger. actor:{}", actor->GetBaseObject()->GetName());
         } else if (isSwordL) { // OK
             reachL = 90.0f;
             handleL = 12.0f;
+            log::trace("Left: sword. actor:{}", actor->GetBaseObject()->GetName());
         } else if (isAxeL) { // OK
             reachL = 60.0f;
             handleL = 12.0f;
+            log::trace("Left: axe. actor:{}", actor->GetBaseObject()->GetName());
         } else if (isMaceL) { // OK
             reachL = 60.0f;
             handleL = 12.0f;
+            log::trace("Left: mace. actor:{}", actor->GetBaseObject()->GetName());
         } else if (isStaffL) { // OK
             reachL = 70.0f;
             handleL = 70.0f;
-        }/* else if (hasShield) {
-            reachL = 30.0f;
-            handleL = 30.0f;
-        }*/
-        reachL *= fRangeMulti;
-        handleL *= fRangeMulti;
-        posWeaponBottomL = weaponL->world.translate;
-        const auto weaponDirectionL = RE::NiPoint3{weaponL->world.rotate.entry[0][1], weaponL->world.rotate.entry[1][1],
-                                                   weaponL->world.rotate.entry[2][1]};
-        posWeaponTopL = posWeaponBottomL + weaponDirectionL * reachL;
-        posWeaponBottomL = posWeaponBottomL - weaponDirectionL * handleL;
-        
-        if (bShowWeaponSegment) debug_show_weapon_range(actor, posWeaponBottomL, posWeaponTopL, weaponL);
+            log::trace("Left: staff. actor:{}", actor->GetBaseObject()->GetName());
+        } else {
+            log::trace("Left: unknown. actor:{}", actor->GetBaseObject()->GetName());
+        }
+        if (reachL > 0.0f) {
+            reachL *= fRangeMulti;
+            handleL *= fRangeMulti;
+            posWeaponBottomL = weaponL->world.translate;
+            const auto weaponDirectionL =
+                RE::NiPoint3{weaponL->world.rotate.entry[0][1], weaponL->world.rotate.entry[1][1],
+                             weaponL->world.rotate.entry[2][1]};
+            posWeaponTopL = posWeaponBottomL + weaponDirectionL * reachL;
+            posWeaponBottomL = posWeaponBottomL - weaponDirectionL * handleL;
+
+            if ((bShowPlayerWeaponSegment && isPlayer) ||
+                (bShowEnemyWeaponSegment && !isPlayer && bDisplayEnemySegmentCheck))
+                // 1234.0f is a magic number to prevent showing effects twice
+                debug_show_weapon_range(actor, posWeaponBottomL, posWeaponTopL, weaponL);
+        }
 
     } else {
         // Animals, dragons will reach here
         log::trace("Doesn't get left weapon. actor:{}", actor->GetBaseObject()->GetName());
-        /*if (isPlayer) {
-            SetNiPointSpecial(posWeaponBottomL);
-            SetNiPointSpecial(posWeaponTopL);
-        }*/
         
     }
     
-    if (weaponR && (isEquipR || (isFistL && isFistR))) {
+    if (!weapDSphere && !weapWolfHead && claws.isEmpty() && clawAndHead.isEmpty() && DWorkerLegs.isEmpty() &&
+        FSpiderClaws.isEmpty()
+        && weaponR && 
+        (isEquipR || (isFistL && isFistR)) && 
+        !(!isPlayer && isBow) && !(!isPlayer && isStaffR)
+        ) {
         float reachR(0.0f), handleR(0.0f);
         if (isFistR) {
             reachR = 10.0f;
             handleR = 10.0f;
+            log::trace("Right: fist. actor:{}", actor->GetBaseObject()->GetName());
         }else if (isTwoHandedAxe || isWarHammer) { // OK
             reachR = 70.0f;
-            handleR = 70.0f;
+            handleR = 45.0f;
+            log::trace("Right: two-handed axe/hammer. actor:{}", actor->GetBaseObject()->GetName());
         } else if (isGreatSword) { // OK
             reachR = 100.0f;
             handleR = 20.0f;
+            log::trace("Right: two-handed greatsword. actor:{}", actor->GetBaseObject()->GetName());
         } else if (isDaggerR) { // OK
             reachR = 20.0f;
             handleR = 10.0f;
+            log::trace("Right: dagger. actor:{}", actor->GetBaseObject()->GetName());
         } else if (isSwordR) {  // OK
             reachR = 90.0f;
             handleR = 12.0f;
+            log::trace("Right: sword. actor:{}", actor->GetBaseObject()->GetName());
         } else if (isAxeR) {  // OK
             reachR = 60.0f;
             handleR = 12.0f;
+            log::trace("Right: axe. actor:{}", actor->GetBaseObject()->GetName());
         } else if (isMaceR) {  // OK
             reachR = 60.0f;
             handleR = 12.0f;
+            log::trace("Right: mace. actor:{}", actor->GetBaseObject()->GetName());
         } else if (isStaffR) {  // OK
             reachR = 70.0f;
             handleR = 70.0f;
+            log::trace("Right: staff. actor:{}", actor->GetBaseObject()->GetName());
+        } else {
+            log::trace("Right: unknown. actor:{}", actor->GetBaseObject()->GetName());
         }
-        reachR *= fRangeMulti;
-        handleR *= fRangeMulti;
-        posWeaponBottomR = weaponR->world.translate;
-        const auto weaponDirectionR = RE::NiPoint3{weaponR->world.rotate.entry[0][1], weaponR->world.rotate.entry[1][1],
-                                                   weaponR->world.rotate.entry[2][1]};
-        posWeaponTopR = posWeaponBottomR + weaponDirectionR * reachR;
-        posWeaponBottomR = posWeaponBottomR - weaponDirectionR * handleR;
+        if (reachR > 0.0f) {
+            reachR *= fRangeMulti;
+            handleR *= fRangeMulti;
+            posWeaponBottomR = weaponR->world.translate;
+            const auto weaponDirectionR =
+                RE::NiPoint3{weaponR->world.rotate.entry[0][1], weaponR->world.rotate.entry[1][1],
+                             weaponR->world.rotate.entry[2][1]};
+            posWeaponTopR = posWeaponBottomR + weaponDirectionR * reachR;
+            posWeaponBottomR = posWeaponBottomR - weaponDirectionR * handleR;
 
-        if (bShowWeaponSegment) debug_show_weapon_range(actor, posWeaponBottomR, posWeaponTopR, weaponR);
+            if ((bShowPlayerWeaponSegment && isPlayer) ||
+                (bShowEnemyWeaponSegment && !isPlayer && bDisplayEnemySegmentCheck)) {
+                debug_show_weapon_range(actor, posWeaponBottomR, posWeaponTopR, weaponR);
+            }
+        }
     } else {
         log::trace("Doesn't get right weapon. actor:{}", actor->GetBaseObject()->GetName());
-        /*if (isPlayer) {
-            SetNiPointSpecial(posWeaponBottomL);
-            SetNiPointSpecial(posWeaponTopL);
-        }*/
     }
 
     
@@ -825,4 +1173,14 @@ RE::hkVector4 ZacOnFrame::CalculatePushVector(RE::NiPoint3 sourcePos, RE::NiPoin
     log::trace("pushMulti:{}. IsEnemy:{}. Before x:{}, y:{}", pushMulti, isEnemy, pushDirection.x, pushDirection.y);
 
     return RE::hkVector4(pushDirection.x * pushMulti, pushDirection.y * pushMulti, 0.0f, 0.0f);
+}
+
+// Clear every buffer before player load a save
+void ZacOnFrame::CleanBeforeLoad() { 
+    colBuffer.Clear();
+    PlayerCollision::GetSingleton()->Clear();
+    // SpeedRing doesn't really need clear: it will only be used to calculate velocity
+    slowTimeData.clear();
+    meleeQueue.Clear();
+    iFrameCount = 0;
 }

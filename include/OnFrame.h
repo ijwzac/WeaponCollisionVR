@@ -26,7 +26,9 @@ namespace ZacOnFrame {
     void CollisionEffect(RE::Actor*, RE::Actor*, RE::NiPoint3 contactPos, bool, bool);
     RE::hkVector4 CalculatePushVector(RE::NiPoint3 sourcePos, RE::NiPoint3 targetPos, bool isEnemy, float speed);
     float CalculatePlayerPushDist(float speed);
-
+    void TimeSlowEffect(RE::Actor*, int64_t);
+    void StopTimeSlowEffect(RE::Actor*);
+    void CleanBeforeLoad();
     
 
     // Stores the original OnFrame function, and call it no matter what later, so we don't break game's functionality
@@ -49,7 +51,7 @@ namespace ZacOnFrame {
         int64_t enemyRotFrame; // how many frames does they rotate
 
         // We must have a default constructor, to avoid non-determined behavior
-        Collision() : enemy(nullptr), iFrameCollision(0) {}
+        Collision() : enemy(nullptr), iFrameCollision(-1) {}
         // Parameterized constructor
         Collision(RE::Actor* e, int64_t frame, RE::NiPoint3 pE, float pushEnemyMaxDist, float contactToEnemyBottom,
                   bool isLeft,
@@ -85,7 +87,7 @@ namespace ZacOnFrame {
 
         // When there was a collision with the same enemy happened recently, stop calculating collision for this enemy
         bool shouldIgnoreCollision() {
-            if (iFrameCount - iFrameCollision < collisionIgnoreDur) {
+            if (iFrameCount - iFrameCollision < collisionIgnoreDur && iFrameCollision != -1) {
                 return true;
             } else {
                 return false;
@@ -95,6 +97,7 @@ namespace ZacOnFrame {
         // Should be called during OnMeleeHit of enemy. If return true, their hit should be nullified by caller
         // Conditions: the frame is very close, or (the frame is relatively close and affectEnemyOnHit is 1)
         bool shouldNullifyEnemyCurretHit() {
+            if (iFrameCollision == -1) return false;
             bool nullify = false;
             auto diff = iFrameCount - iFrameCollision;
             if (diff > 0 && diff < collisionEffectDurEnemyShort) {
@@ -111,9 +114,11 @@ namespace ZacOnFrame {
             return nullify;
         }
 
-        // Deprecated: the contactToEnemyBottom is not correct. For several frames, continue to spawn sparks on enemy's weapon
+        // For several frames, continue to spawn sparks on enemy's weapon
         void SpawnSpark() {
-            if (iFrameCount - iFrameCollision < iSparkSpawn && iFrameCount % 3 == 0) {
+            if (iFrameCollision == -1 || !enemy) return;
+            if (iFrameCount - iFrameCollision < iSparkSpawn && iFrameCount % 6 == 0) {
+                if (GetSpecialRace(enemy) != 0) return;
                 const auto nodeName = isEnemyLeft ? "SHIELD"sv : "WEAPON"sv;
                 auto root = netimmerse_cast<RE::BSFadeNode*>(enemy->Get3D());
                 if (!root) return;
@@ -138,6 +143,7 @@ namespace ZacOnFrame {
 
         // For several frames, change the angle of enemy, creating hit juice
         void ChangeAngle() { 
+            if (!enemy) return;
             if (angleSetCount < enemyRotFrame) {
                 if (enemyIsRotClockwise) {
                     enemy->SetRotationZ(enemyOriAngleZ + angleSetCount * fEnemyRotStep);
@@ -150,6 +156,7 @@ namespace ZacOnFrame {
 
         // For several frames, change the velocity of enemy, to push them away
         void ChangeVelocity() {
+            if (!enemy) return;
             float x = hkv.quad.m128_f32[0];
             float y = hkv.quad.m128_f32[1];
             log::trace("Entering ChangeVelocity of enemy, hkv.x:{}, hkv.y:{}", x,
@@ -194,6 +201,13 @@ namespace ZacOnFrame {
         std::size_t capacity; // how many collisions can be stored. Oldest one will be replaced by new one
     public:
         CollisionRing(std::size_t cap) : buffer(cap), capacity(cap) {}
+
+        void Clear() {
+            log::trace("In CollisionRing::Clear");
+            for (size_t i = 0; i < capacity; i++) {
+                buffer[i] = Collision();
+            }
+        }
 
         void PushCopy(Collision col) { 
             log::trace("In CollisionRing::PushCopy");
@@ -256,6 +270,11 @@ namespace ZacOnFrame {
             return std::addressof(singleton);
         }
 
+        void Clear() { 
+            frameLastCollision = 0;
+
+        }
+
         bool IsEmpty() { return frameLastCollision == 0; }
         
         void SetValue(int64_t fLC, float cTB, bool iL, RE::hkVector4 hkv, int64_t fTP, float mPD,
@@ -273,7 +292,8 @@ namespace ZacOnFrame {
 
         // For several frames, continue to spawn sparks on player's weapon
         void SpawnSpark() {
-            if (iFrameCount - frameLastCollision < iSparkSpawn && iFrameCount % 4 == 0) {
+            if (!playerAct || frameLastCollision == 0) return;
+            if (iFrameCount - frameLastCollision < iSparkSpawn && iFrameCount % 6 == 0) {
                 const auto nodeName = isLeft ? "SHIELD"sv : "WEAPON"sv;
                 auto root = netimmerse_cast<RE::BSFadeNode*>(playerAct->Get3D());
                 if (!root) return;
@@ -298,6 +318,7 @@ namespace ZacOnFrame {
 
         // For several frames, change the velocity of player, to push them away
         void ChangeVelocity() {
+            if (!playerAct || frameLastCollision == 0) return;
             float x = pushVelocity.quad.m128_f32[0];
             float y = pushVelocity.quad.m128_f32[1];
             log::trace("Entering ChangeVelocity of player, pushVelocity.x:{}, pushVelocity.y:{}", x, y);
@@ -351,6 +372,10 @@ namespace ZacOnFrame {
     public:
         SpeedRing(std::size_t cap) : bufferL(cap), bufferR(cap), capacity(cap), indexCurrentR(0), indexCurrentL(0) {}
         
+        void Clear() {
+
+        }
+
         void Push(WeaponPos p, bool isLeft) { 
             if (isLeft) {
                 bufferL[indexCurrentL] = p;
@@ -387,7 +412,29 @@ namespace ZacOnFrame {
     };
     extern SpeedRing speedBuf;
 
+    // Record information for timeslow spell
+    class SlowTimeEffect {
+    public: 
+        int64_t frameShouldRemove;
+        std::vector<float> oldMagnitude; 
+        RE::SpellItem* timeSlowSpell;
+        SlowTimeEffect(std::size_t cap) : frameShouldRemove(-1), oldMagnitude(cap), timeSlowSpell(nullptr) {}
 
+        bool shouldRemove(int64_t currentFrame) {
+            if (frameShouldRemove == -1) {
+                return false;
+            }
+            return frameShouldRemove <= currentFrame;
+        }
 
+        void clear() { 
+            frameShouldRemove = -1;
+            oldMagnitude.clear();
+        }
+    };
+
+    extern SlowTimeEffect slowTimeData;
+
+    
 }
 

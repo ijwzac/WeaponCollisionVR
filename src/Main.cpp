@@ -9,7 +9,6 @@ https://github.com/DennisSoemers/ParryingRPG My project starts as a patch to thi
 
 #include <stddef.h>
 #include "OnMeleeHit.h"
-#include "PrecisionAPI.h"
 #include "Settings.h"
 #include "Utils.h"
 #include "OnFrame.h"
@@ -20,6 +19,7 @@ using namespace SKSE::stl;
 
 ZacOnFrame::CollisionRing ZacOnFrame::colBuffer = ZacOnFrame::CollisionRing(10);
 ZacOnFrame::SpeedRing ZacOnFrame::speedBuf = ZacOnFrame::SpeedRing(90);
+ZacOnFrame::SlowTimeEffect ZacOnFrame::slowTimeData = ZacOnFrame::SlowTimeEffect(0);
 OriMeleeQueue meleeQueue = OriMeleeQueue(20);
 
 namespace {
@@ -64,36 +64,50 @@ namespace {
     }
 
     void MessageHandler(SKSE::MessagingInterface::Message* a_msg) {
-        log::info("MessageHandler called");
+        log::trace("MessageHandler called");
         switch (a_msg->type) {
             case SKSE::MessagingInterface::kPostPostLoad: {
-                log::info("kPostPostLoad");
+                /*log::info("kPostPostLoad");
                 const auto precisionAPI =
                     reinterpret_cast<PRECISION_API::IVPrecision4*>(PRECISION_API::RequestPluginAPI());
                 if (precisionAPI) {
                     precisionAPI->AddWeaponWeaponCollisionCallback(SKSE::GetPluginHandle(), OnMeleeHit::PrecisionWeaponsCallback);
                     logger::info("Enabled compatibility with Precision");
-                }
+                }*/
             }
                 break;
+            case SKSE::MessagingInterface::kPreLoadGame: {
+                log::info("kPreLoadGame");
+                ZacOnFrame::CleanBeforeLoad();
+            } break;
             case SKSE::MessagingInterface::kDataLoaded: {
-                log::info("kDataLoaded");
+                log::info("kDataLoaded"); 
+                auto parryrpgHandle = GetModuleHandleA("ParryingRPG.dll");
+                if (parryrpgHandle) {
+                    logger::error("Warning! Pseudo Physical Weapon Collision and Parry has detected that ParryingRPG.dll is also loaded!");
+                    RE::DebugMessageBox("Warning! Pseudo Physical Weapon Collision and Parry has detected that ParryingRPG.dll is also loaded!");
+                }
+
                 auto parryingHandle = GetModuleHandleA("Parrying.dll");
                 if (parryingHandle) {
-                    logger::error("Warning! ParryingRPG has detected that Parrying.dll is also loaded!");
-                    RE::DebugMessageBox("Warning! ParryingRPG has detected that Parrying.dll is also loaded!");
+                    logger::error("Warning! Pseudo Physical Weapon Collision and Parry has detected that Parrying.dll is also loaded!");
+                    RE::DebugMessageBox("Warning! Pseudo Physical Weapon Collision and Parry has detected that Parrying.dll is also loaded!");
                 }
 
                 auto maxsuWeaponParryHandle = GetModuleHandleA("MaxsuWeaponParry.dll");
                 if (maxsuWeaponParryHandle) {
-                    logger::error("Warning! ParryingRPG has detected that MaxsuWeaponParry.dll is also loaded!");
-                    RE::DebugMessageBox("Warning! ParryingRPG has detected that MaxsuWeaponParry.dll is also loaded!");
+                    logger::error("Warning! Pseudo Physical Weapon Collision and Parry has detected that MaxsuWeaponParry.dll is also loaded!");
+                    RE::DebugMessageBox("Warning! Pseudo Physical Weapon Collision and Parry has detected that MaxsuWeaponParry.dll is also loaded!");
                 }
-                // TODO: change name of this dll and detect parrying rpg dll
                 auto handToHandHandle = GetModuleHandleA("HandToHand.dll");
                 if (handToHandHandle) {
-                    logger::trace("Hand to hand loaded");
+                    logger::info("Hand to hand loaded");
                     bHandToHandLoad = true;
+                }
+                auto planckHandle = GetModuleHandleA("activeragdoll.dll");
+                if (planckHandle) {
+                    logger::info("Planck loaded");
+                    bPlanck = true;
                 }
             }
                 break;

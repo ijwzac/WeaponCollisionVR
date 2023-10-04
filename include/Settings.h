@@ -6,7 +6,7 @@ extern bool bEnableWholeMod;
 // Global
 extern int64_t iFrameCount;
 extern bool bHandToHandLoad;
-extern int globalInputCounter;
+extern bool bPlanck;
 
 // Parry difficulty
 extern float fRangeMulti;          // controls the effective length of weapon in this mod
@@ -26,6 +26,7 @@ extern float fEnemyStaLargeRecoilThresPer;  // when enemy stamina below this per
 
 extern float fEnemyStopVelocityThres;       // When player's weapon speed is above this, enemy stop current attack
 extern float fEnemyLargeRecoilVelocityThres;  // When player's weapon speed is above this, enemy stop current attack and recoil
+extern float fEnemyHealthRagdollThresPer;      // when enemy health below this percent, ragdoll them
 
 // Parry effect on player
 // Note: even if player's stamina is 0, they can still parry
@@ -41,9 +42,15 @@ extern float fPlayerWeaponSpeedRewardThres;  // when player moves weapon at high
 extern float fPlayerWeaponSpeedReward;       // Multiplier os stamina cost if high speed
 extern float fPlayerWeaponSpeedRewardThres2;
 extern float fPlayerWeaponSpeedReward2;
+extern float fPlayerStaUnableParryThresPer;         // when player stamina below this percent, they can't parry
 extern float fPlayerStaStopThresPer;         // when player stamina below this percent, they stop current attack
 extern float fPlayerStaLargeRecoilThresPer;  // when player stamina below this percent, they stop and have large recoil
 extern int64_t iSparkSpawn; // number of frames that we spawn spark on weapons.
+extern float fTimeSlowRatio; // 0.1 means time flows at 10% of normal time
+extern int64_t iTimeSlowFrameNormal; // for how many frames will time be slow
+extern int64_t iTimeSlowFrameStop;
+extern int64_t iTimeSlowFrameLargeRecoil;
+extern bool bPlayerCheckHeavyGauntlet;
 
 // Player experience obtained for every collision
 extern float fExpBlock;
@@ -63,12 +70,16 @@ extern float fDetectEnemy; // Calculate collisions between player and only enemi
 extern int64_t collisionIgnoreDur; // After a collision, within this number of frames, don't compute collision of the same enemy
                                     // This is to prevent having tens of collisions when weapons are close
                                     // 
-extern bool bShowWeaponSegment; // For debug. This shows the weapon range in this mod. May hurt your eyes
+extern bool bShowPlayerWeaponSegment; // For debug. This shows the weapon range in this mod. May hurt your eyes
+extern bool bShowEnemyWeaponSegment; // For debug. This shows the weapon range in this mod. May hurt your eyes
 extern int64_t collisionEffectDurEnemyShort; // after a collision, within this number of frames, a hit event from enemy must be affected
 extern int64_t
     collisionEffectDurEnemyLong;  // after a collision, within this number of frames, 
                             // a hit event is affected if affectEnemyOnHit/affectPlayerOnHit is 1
 extern int64_t iDelayEnemyHit; // When enemy hit player, delay that event for how many frames
+extern float fMagicNum1;
+extern float fMagicNum2;
+extern float fMagicNum3;
 
 
 // Thanks to: https://github.com/powerof3/CLibUtil
@@ -133,9 +144,9 @@ public:
         void Load(CSimpleIniA& a_ini);
     } sExperience;
 
-    struct Haptic {
+    struct Feedback {
         void Load(CSimpleIniA& a_ini);
-    } sHaptic;
+    } sFeedback;
 
     struct Technique {
         void Load(CSimpleIniA& a_ini);
