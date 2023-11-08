@@ -409,8 +409,36 @@ namespace ZacOnFrame {
             // Return the larger velocity based on magnitude
             return (velocityBottom.Length() > velocityTop.Length()) ? velocityBottom : velocityTop;
         }
+
+        // The shortest distance between player's weapon and the given projectile, in the last N frames
+        DistResult ShortestDisRecently(std::size_t N, RE::NiPoint3 posProj, RE::NiPoint3 velocity) {
+            float shortestDist = 9999.0f;
+            DistResult shortestResult = DistResult();
+            RE::NiPoint3 posProjFakeEnd = posProj + velocity / velocity.Length() * fProjLength; 
+            if (N == 0 || N > capacity) {
+                // Return zero velocity or handle error
+                return DistResult();
+            }
+            for (int i = 0; i < 2; i++) {
+                bool isLeft = i == 0 ? true : false;
+                std::size_t currentIdx = isLeft ? indexCurrentL : indexCurrentR;
+                const std::vector<WeaponPos>& buffer = isLeft ? bufferL : bufferR;
+                for (std::size_t frameCount = 0; frameCount < N; frameCount++) {
+                    std::size_t frame = (currentIdx - 1 - frameCount + capacity) % capacity;
+                    RE::NiPoint3 posBottom = buffer[frame].bottom;
+                    RE::NiPoint3 posTop = buffer[frame].top;
+                    auto distResult = OnMeleeHit::Dist(posBottom, posTop, posProj, posProjFakeEnd);
+                    if (distResult.dist < shortestDist) {
+                        distResult.proj_isLeft = isLeft;
+                        shortestResult = distResult;
+                    }
+                }
+            }
+            return shortestResult;
+        }
     };
-    extern SpeedRing speedBuf;
+    extern SpeedRing speedBuf; // positions of player's weapons, but the handle length is 0 and weapon length is a fixed number
+    extern SpeedRing weapPosBuf;  // positions of player's weapons
 
     // Record information for timeslow spell
     class SlowTimeEffect {
@@ -418,7 +446,9 @@ namespace ZacOnFrame {
         int64_t frameShouldRemove;
         std::vector<float> oldMagnitude; 
         RE::SpellItem* timeSlowSpell;
-        SlowTimeEffect(std::size_t cap) : frameShouldRemove(-1), oldMagnitude(cap), timeSlowSpell(nullptr) {}
+        int64_t frameLastSlowTime; // don't allow too frequent slow time 
+        SlowTimeEffect(std::size_t cap)
+            : frameShouldRemove(-1), frameLastSlowTime(-1), oldMagnitude(cap), timeSlowSpell(nullptr) {}
 
         bool shouldRemove(int64_t currentFrame) {
             if (frameShouldRemove == -1) {
@@ -434,6 +464,118 @@ namespace ZacOnFrame {
     };
 
     extern SlowTimeEffect slowTimeData;
+
+    class ParriedProj {
+        std::vector<RE::Projectile*> buffer;
+        std::vector<int64_t> bufferFrame;
+        std::size_t indexCurrent;
+        std::size_t capacity;
+
+        //// Also has some data to log the previous positions of a projectile, to find arrows in wall
+        //// Arrows in wall can't be filtered by linearVelocity, because it doesn't reduce to 0 after impact
+        //class ProjRecord {
+        //public:
+        //    std::vector<RE::NiPoint3> bufferPos;
+        //    std::size_t indexPosCurrent;
+        //    std::size_t posCapacity;
+        //    RE::Projectile* proj;
+        //    bool isStatic;
+        //    int64_t iFrameSetStatic; // if it's set to static too long ago, maybe the game is reusing pointer
+        //    ProjRecord(std::size_t cap, RE::Projectile* proj)
+        //        : bufferPos(cap), posCapacity(cap), indexPosCurrent(0), proj(proj), isStatic(false), iFrameSetStatic(-1) {}
+
+        //};
+        //std::vector<ProjRecord*> bufferProjRecord;
+        //std::size_t indexRecordCurrent;
+
+    public:
+        ParriedProj(std::size_t cap)
+            : buffer(cap), bufferFrame(cap), indexCurrent(0), capacity(cap) {
+            //for (size_t i = 0; i < cap; i++) {
+            //    bufferProjRecord.push_back(nullptr);
+            //}
+        }
+
+        void Clear() {
+            log::trace("In ParriedProj::Clear");
+            for (size_t i = 0; i < capacity; i++) {
+                buffer[i] = nullptr;
+                bufferFrame[i] = -1;
+                indexCurrent = 0;
+                //delete bufferProjRecord[i];
+                //bufferProjRecord[i] = nullptr;
+            }
+        }
+
+        //// Record any projectile, unless it's already known as static
+        //void UpdateProjPos(RE::Projectile* proj) {
+        //    for (size_t i = 0; i < capacity; i++) {
+        //        if (bufferProjRecord[i] != nullptr && bufferProjRecord[i]->proj == proj) {
+        //            bufferProjRecord[i]->bufferPos[bufferProjRecord[i]->indexPosCurrent] = proj->GetPosition();
+        //            bufferProjRecord[i]->indexPosCurrent =
+        //                (bufferProjRecord[i]->indexPosCurrent + 1) % bufferProjRecord[i]->posCapacity;
+        //            log::info("UpdateProjPos: pos:({},{},{})", proj->GetPosition().x, proj->GetPosition().y,
+        //                       proj->GetPosition().z);
+        //            return;
+        //        }
+        //    }
+        //    // This is a new proj
+        //    bufferProjRecord[indexRecordCurrent] = new ProjRecord(10, proj);
+        //    indexRecordCurrent = (indexRecordCurrent + 1) % capacity;
+        //    log::info("UpdateProjPos: new proj");
+        //}
+
+        //bool IsStatic(RE::Projectile* proj) {
+        //    for (size_t i = 0; i < capacity; i++) {
+        //        if (bufferProjRecord[i] != nullptr && bufferProjRecord[i]->proj == proj) {
+        //            /*if (iFrameCount - bufferProjRecord[i]->iFrameSetStatic > 90) {
+        //                delete bufferProjRecord[i];
+        //                bufferProjRecord[i] = nullptr;
+        //                continue;
+        //            }*/
+        //            auto record = bufferProjRecord[i];
+        //            //if (record->isStatic) return true;
+        //            // check if it should be static
+        //            RE::NiPoint3 startPos =
+        //                record->bufferPos[(record->indexPosCurrent - 5 + record->posCapacity) % record->posCapacity];
+        //            RE::NiPoint3 endPos =
+        //                record->bufferPos[(record->indexPosCurrent - 1 + record->posCapacity) % record->posCapacity];
+        //            if (startPos.SqrLength() < 0.1f || endPos.SqrLength() < 0.1f) {
+        //                // too early to tell if it's static since we haven't record enough position info
+        //                return false;
+        //            }
+        //            RE::NiPoint3 velocity = (endPos - startPos) / static_cast<float>(4);
+        //            log::info("IsStatic: proj velocity:{}", velocity.SqrLength());
+        //            if (velocity.SqrLength() < 300.0f) {
+        //                record->isStatic = true;
+        //                record->iFrameSetStatic = iFrameCount;
+        //                return true;
+        //            }
+        //        }
+        //    }
+        //    return false;
+        //}
+
+        // Record a parried projectile
+        void PushParried(RE::Projectile* proj) { 
+            buffer[indexCurrent] = proj;
+            bufferFrame[indexCurrent] = iFrameCount;
+            indexCurrent = (indexCurrent + 1) % capacity;
+        }
+
+        // When calculating isParried, we should also check the frame: projectile pointer seems to be reused by the game
+        bool IsParried(RE::Projectile* proj) {
+            for (size_t i = 0; i < capacity; i++) {
+                if (buffer[i] == proj) {
+                    if (iFrameCount - bufferFrame[i] < 30) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+    };
+    extern ParriedProj parriedProj;
 
     
 }

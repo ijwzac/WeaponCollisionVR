@@ -98,3 +98,10 @@ static RE::FormID spider2 = 0x4e507;
 
 // dwenmer spider: 131f3
 static RE::FormID dwenmerSpider = 0x131f3;
+
+
+
+
+// Deprecated: not working
+//RE::BSPointerHandle<RE::Projectile>* LaunchArrow(RE::Projectile* proj, RE::Actor* playerActor,
+//                                                        RE::TESObjectREFR* enemy);

@@ -181,12 +181,17 @@ RE::SpellItem* GetTimeSlowSpell() {
         return nullptr;
     }
     auto spellWheelIndex = handler->GetLoadedModIndex("SpellWheelVR.esp");
-    auto spellWheelMod = handler->LookupLoadedModByName("SpellWheelVR.esp");
-    if (spellWheelMod) {
-        log::trace("GetTimeSlowSpell: get spellWheel mod");
-    } else {
-        log::trace("GetTimeSlowSpell: didn't get spellWheel mod");
+    if (!spellWheelIndex.has_value()) {
+        log::trace("GetTimeSlowSpell: failed to get spellWheel");
+        return nullptr;
     }
+
+    //auto spellWheelMod = handler->LookupLoadedModByName("SpellWheelVR.esp");
+    //if (spellWheelMod) {
+    //    log::trace("GetTimeSlowSpell: get spellWheel mod");
+    //} else {
+    //    log::trace("GetTimeSlowSpell: didn't get spellWheel mod");
+    //}
 
     auto vrikMod = handler->LookupLoadedModByName("vrik.esp");
     if (vrikMod) {
@@ -195,10 +200,6 @@ RE::SpellItem* GetTimeSlowSpell() {
         log::trace("GetTimeSlowSpell: didn't get vrik mod");
     }
 
-    if (!spellWheelIndex.has_value()) {
-        log::error("GetTimeSlowSpell: failed to get spellWheel");
-        return nullptr;
-    }
 
     RE::FormID partFormID = 0x000EA5;
     RE::FormID fullFormID = GetFullFormID(spellWheelIndex.value(), partFormID);
@@ -707,3 +708,60 @@ void RecoilEffect(RE::Actor* actor, int strength) {
         }
     }
 }
+
+RE::Projectile::LaunchData::~LaunchData() = default;
+
+// Deprecated: Not working
+// Many code learnt from https://github.com/TESRSkywind/SkywindProjectiles
+//RE::BSPointerHandle<RE::Projectile>* LaunchArrow(RE::Projectile* proj, RE::Actor* playerActor,
+//                                                RE::TESObjectREFR* enemy) { 
+//    RE::Projectile::PROJECTILE_RUNTIME_DATA& projRuntime = proj->GetProjectileRuntimeData();
+//    RE::Projectile::LaunchData data = RE::Projectile::LaunchData();
+//    data.origin = proj->GetPosition();
+//    data.contactNormal = RE::NiPoint3(0, 0, 0);
+//    auto ammo = projRuntime.ammoSource;
+//    if (!ammo) {
+//        log::error("Projectile arrow without ammo. Form:{}", (std::uint32_t)proj->formID);
+//        return nullptr;
+//    }
+//    data.projectileBase = ammo->data.projectile;
+//    if (!ammo->data.projectile) {
+//        log::warn("Projectile arrow ammo with null projectile ptr. Form:{}", (std::uint32_t)proj->formID);
+//    }
+//    data.shooter = playerActor;
+//    data.combatController = playerActor->GetActorRuntimeData().combatController;
+//    if (!data.combatController) {
+//        // This branch is chosen
+//        log::warn("Projectile arrow ammo with null combatController ptr. Form:{}", (std::uint32_t)proj->formID);
+//    }
+//    data.weaponSource = projRuntime.weaponSource;
+//    data.ammoSource = ammo;
+//    data.angleZ = playerActor->GetAngleZ();
+//    data.angleX = playerActor->GetAngleX();
+//    data.unk50 = nullptr;
+//    data.desiredTarget = enemy;
+//    data.unk60 = 0.0f;
+//    data.unk64 = 0.0f;
+//    data.parentCell = playerActor->GetParentCell();
+//    data.spell = nullptr;
+//    data.castingSource = RE::MagicSystem::CastingSource::kOther;
+//    data.unk7C = 0; // TODO: see if this number is OK
+//    data.enchantItem = nullptr;
+//    data.poison = nullptr;
+//    data.area = 0; // TODO: see if this number is OK
+//    data.power = projRuntime.power;
+//    data.scale = projRuntime.scale;
+//    data.alwaysHit = false; // TODO: see if this number is OK
+//    data.noDamageOutsideCombat = false;  // TODO: see if this number is OK
+//    data.autoAim = false;
+//    data.unk9F = false;
+//    data.useOrigin = false;
+//    data.deferInitialization = false;
+//    data.forceConeOfFire = false;
+//
+//    RE::BSPointerHandle<RE::Projectile>* handle = new RE::BSPointerHandle<RE::Projectile>;
+//    //RE::BSPointerHandle<RE::Projectile> handle = RE::BSPointerHandle<RE::Projectile>(proj);
+//    log::trace("Launching new arrow at enemy:{}", enemy->GetDisplayFullName());
+//    return RE::Projectile::Launch(handle, data);
+//
+//}

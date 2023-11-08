@@ -25,6 +25,8 @@ void ZacOnFrame::InstallFrameHook() {
 
 bool isOurFnRunning = false;
 long long highest_run_time = 0;
+long long total_run_time = 0;
+long long run_time_count = 1;
 
 // I am trying a not very normal approach here: fire the original event first
 void ZacOnFrame::OnFrameUpdate() {
@@ -35,33 +37,37 @@ void ZacOnFrame::OnFrameUpdate() {
     isOurFnRunning = true;
     // Get the current time point
     auto now = std::chrono::high_resolution_clock::now();
+    bool isPaused;
     if (bEnableWholeMod) {
         if (const auto ui{RE::UI::GetSingleton()}) {
             if (!ui->GameIsPaused()) {  // Not in menu, not in load, not in console
                 ZacOnFrame::CollisionDetection();
                 iFrameCount++;
-            } else {
-                // log::trace("Game paused, don't record collision");
+                isPaused = false;
             }
         }
     }
-    // Convert time point to since epoch (duration)
-    auto end = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - now);
-
     isOurFnRunning = false;
+    if (!isPaused) {
+        // Convert time point to since epoch (duration)
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - now);
 
-    // Display the microseconds since epoch
-    if (highest_run_time < duration.count()) highest_run_time = duration.count();
-    log::info("Exe time of our fn:{} us. Highest:{}", duration.count(),
-               highest_run_time);  
-    // Tested on 0.9.0 version. Normally takes around 30us when in combat. 0us when not. Highest: 240us
-    //                  Stress test with 20 enemies: 60us, highest:1500us. 
-    //                  Turning trace on slows down average speed by around 2X
-    //                  Debug version is like 10X slower, but highest doesn't change much
+        // Display the microseconds since epoch
+        if (highest_run_time < duration.count()) highest_run_time = duration.count();
+        total_run_time += duration.count();
+        auto average_run_time = total_run_time / run_time_count++;
+        if (run_time_count % 500 == 1) {
+            log::info("Exe time of our fn:{} us. Highest:{}. Average:{}. Total:{}. Count:{}", duration.count(), highest_run_time,
+                      average_run_time, total_run_time, run_time_count);
+        }
 
+        // Tested on 0.9.0 version. Normally takes around 30us when in combat. 0us when not. Highest: 240us
+        //                  Stress test with 20 enemies: 60us, highest:1500us.
+        //                  Turning trace on slows down average speed by around 2X
+        //                  Debug version is like 10X slower, but highest doesn't change much
+    }
 
-    
     ZacOnFrame::_OnFrame();  // TODO: figure out why the game works fine without this line
                              // Anyway, we should always call it
                              // This function takes 0 us. Very fast
@@ -135,6 +141,9 @@ void ZacOnFrame::CollisionDetection() {
         log::warn("Fail to get player's weapon pos");
         return;
     }
+    weapPosBuf.Push(WeaponPos(posWeaponBottomL, posWeaponTopL), true);
+    weapPosBuf.Push(WeaponPos(posWeaponBottomR, posWeaponTopR), false);
+
     RE::NiPoint3 posWeaponFixedMiddleL, posWeaponFixedMiddleR, posPlayerHandL, posPlayerHandR; // Fixed point of player's weapon, so velocity calculation is the same for all weapons
     if (!FrameGetWeaponFixedPos(playerActor, posWeaponFixedMiddleL, posWeaponFixedMiddleR, posPlayerHandL, posPlayerHandR)) {
         log::warn("Fail to get player's fixed point pos");
@@ -160,6 +169,211 @@ void ZacOnFrame::CollisionDetection() {
             log::trace("Player not attacking");
             return;
         }
+    }
+
+    // Get nearby projectiles
+    // If the position of player's weapon now, or the positions of player's weapon in the past several frames
+    //      is close to the projectile (projectile's one end is its position, and another end is ahead of it using velocity:
+    //      (1) mark it as parried
+    //      (2) TODO: change owner to player
+    //      (3) change velocity to player weapon velocity, but slower. 
+    //          If velocity direction is basically to the caster, make it fly to caster
+    //      (4) start slow time effect
+    std::vector<RE::TESObjectREFR*> vNearbyProj;
+    if (const auto TES = RE::TES::GetSingleton(); TES && bEnableProjParry) {
+        TES->ForEachReferenceInRange(playerRef, fProjDetectRange, [&](RE::TESObjectREFR& b_ref) {
+            auto proj = b_ref.AsProjectile();
+            if (!proj) return RE::BSContainer::ForEachResult::kContinue;
+            int projType = -1;
+            // Ice storm, dragon's fire is none of below and can't be detected currently
+            if (b_ref.Is(RE::FormType::ProjectileBeam)) {
+                // sparks, chain lightning, can't parry
+                // They are present only when close to enemy, and velocity is very high
+                projType = 0;
+            }
+            if (b_ref.Is(RE::FormType::ProjectileFlame)) {
+                // frostbite, flame, can't parry.
+                // They are present only when close to enemy, and their velocity is 0. Also changing velocity's effect is strange
+                projType = 1;
+            }
+            if (b_ref.Is(RE::FormType::ProjectileCone)) {
+                // haven't seen
+                projType = 2;
+            }
+            if (b_ref.Is(RE::FormType::Projectile)) {
+                // haven't seen
+                projType = 3;
+            }
+            if (b_ref.Is(RE::FormType::ProjectileArrow)) {
+                projType = 4;
+            }
+            if (b_ref.Is(RE::FormType::ProjectileBarrier)) {
+                // haven't seen
+                projType = 5;
+            }
+            if (b_ref.Is(RE::FormType::ProjectileGrenade)) {
+                // rune, can't parry. Will stay on ground
+                projType = 6;
+            }
+            if (b_ref.Is(RE::FormType::ProjectileMissile)) {
+                // firebelt, icespike
+                projType = 7;
+            }
+            if (projType != 4 && projType != 7) {
+                log::trace("Projectile type can't be parried. Name:{}", b_ref.GetName());
+                return RE::BSContainer::ForEachResult::kContinue;
+            }
+            if (!b_ref.Is3DLoaded()) {
+                log::trace("Proj 3D not loaded. Name:{}", b_ref.GetName());
+                return RE::BSContainer::ForEachResult::kContinue;
+                
+            }
+            
+                
+            RE::Projectile::PROJECTILE_RUNTIME_DATA& projRuntime = proj->GetProjectileRuntimeData();
+            RE::ObjectRefHandle casterHandle = projRuntime.shooter;
+            RE::NiPoint3 velocity = projRuntime.linearVelocity;
+
+            // Check if the velocity is too low
+            if (velocity.Length() < 300.0f) {
+                log::trace("Too slow Asprojectile. Name:{}. Speed:{}. Pos:{},{},{}",
+                           proj->GetName(), velocity.Length(), proj->GetPositionX(),
+                           proj->GetPositionY(), proj->GetPositionZ());
+                return RE::BSContainer::ForEachResult::kContinue;
+            }
+
+            // Check if the projectile already triggered impact
+            int countImpact = 0;
+            for (auto impactIter = projRuntime.impacts.begin(); impactIter != projRuntime.impacts.end();
+                    ++impactIter) {
+                countImpact++;
+                auto impact = *impactIter;
+                if (impact) {
+                    log::trace("Impact result:{}", static_cast<int>(impact->impactResult));
+                } else {
+                    log::trace("Impact is nullptr");
+                }
+            }
+            if (countImpact > 0) {
+                log::trace("Impact count:{}. Return", countImpact);
+                return RE::BSContainer::ForEachResult::kContinue;
+            }
+
+            // Check if it has caster and caster is not player
+            auto caster = casterHandle.get().get();
+            if (!caster || caster == playerActor) { 
+                log::trace( "Asprojectile without caster or caster is player. Name:{}. Pos:{},{},{}",
+                    proj->GetName(), proj->GetPositionX(), proj->GetPositionY(), proj->GetPositionZ());
+                return RE::BSContainer::ForEachResult::kContinue;
+            }
+
+            // Check if it has already been parried
+            if (parriedProj.IsParried(proj)) {
+                log::trace("Found parried Asprojectile. Shooter:{}. Name:{}. Speed:{}. Pos:{},{},{}",
+                            caster->GetDisplayFullName(), proj->GetName(), velocity.Length(),
+                            proj->GetPositionX(), proj->GetPositionY(), proj->GetPositionZ());
+                return RE::BSContainer::ForEachResult::kContinue;
+            }
+
+            log::trace("Found Asprojectile. Name:{}. Speed:{}. Pos:{},{},{}", proj->GetName(), velocity.Length(),
+                        proj->GetPositionX(),
+                        proj->GetPositionY(), proj->GetPositionZ());
+
+
+            // See if player successfully parries it
+            // Increase the weapon range for missle type (fire ball)
+            float oldRange = fRangeMulti;
+            if (projType == 7) {
+                fRangeMulti += 0.4f;
+            }
+            DistResult shortestDist =
+                weapPosBuf.ShortestDisRecently(iProjCollisionFrame, proj->GetPosition(), velocity);
+            if (shortestDist.dist > fProjCollisionDistThres || (projType == 7 && shortestDist.dist > fProjCollisionDistThres + 5.5f)) {
+                log::trace("Parry no success. Dist:{}", shortestDist.dist);
+                return RE::BSContainer::ForEachResult::kContinue;
+            }
+            if (projType == 7) {
+                fRangeMulti = oldRange;
+            }
+
+            // Mark as parried, to avoid being parried multiple times
+            parriedProj.PushParried(proj);
+
+            auto oriVel = projRuntime.linearVelocity;
+            log::trace("Parried! Ori Velocity:{},{},{}", oriVel.x, oriVel.y, oriVel.z);
+                    
+
+            //// Option 1: Set the projectile to fly to its caster
+            //RE::NiPoint3 vecToCaster = caster->GetPosition() + RE::NiPoint3(0, 0, 50.0f) - proj->GetPosition();
+            //if (vecToCaster.Length() > 0.0f) vecToCaster /= vecToCaster.Length();
+            //vecToCaster *= oriVel.Length();
+            //projRuntime.linearVelocity = vecToCaster; 
+
+            // Option 2: Set the projectile to fly to player's weapon direction
+            RE::NiPoint3 vecWeapon = speedBuf.GetVelocity(5, shortestDist.proj_isLeft);
+            if (vecWeapon.Length() > 0.0f) {
+                vecWeapon /= vecWeapon.Length();
+                if (oriVel.Length() > 0.0f) {
+                    vecWeapon += oriVel / oriVel.Length() / 2;
+                }
+            } else {
+                vecWeapon = RE::NiPoint3(0, 0, 1.0);
+            }
+            if (projType == 7) {
+                vecWeapon += RE::NiPoint3(0, 0, 0.3f);
+                vecWeapon /= vecWeapon.Length();
+            }
+            vecWeapon *= oriVel.Length();
+            projRuntime.linearVelocity = vecWeapon; 
+            if (projType == 4) {
+                projRuntime.linearVelocity *= 0.5f;
+            } else if (projType == 7) {
+                projRuntime.linearVelocity *= 0.8f;
+            } 
+           
+
+            // Deprecated: Trying to change owner to player, but not useful
+            //projRuntime.shooter = projRuntime.desiredTarget;
+            //projRuntime.desiredTarget = casterHandle;
+            //auto oriCause = projRuntime.actorCause.get();
+            //if (oriCause) {
+            //    oriCause->actor = RE::BSPointerHandle<RE::Actor>(playerActor);
+            //} else {
+            //    log::warn("Fail to get projectile actorCause");
+            //}
+
+            // Deprecated: Trying to shoot a new arrow at enemy, but failed
+            /*if (projType == 4) {
+                projRuntime.linearVelocity *= 0.05f;
+                LaunchArrow(proj, playerActor, caster);
+            }*/
+                
+            // Slow time
+            TimeSlowEffect(playerActor, iTimeSlowFrameProj);
+
+            // Play sound and spark
+            const auto nodeName = shortestDist.proj_isLeft ? "SHIELD"sv : "WEAPON"sv;
+            RE::NiPoint3 contactPos = shortestDist.contactPoint;
+            auto root = netimmerse_cast<RE::BSFadeNode*>(playerActor->Get3D());
+            if (root) {
+                auto bone = netimmerse_cast<RE::NiNode*>(root->GetObjectByName(nodeName));
+                if (bone) {
+                    SKSE::GetTaskInterface()->AddTask(
+                        [playerActor, contactPos, bone]() { 
+                            RE::NiPoint3 P_V = {0.0f, 0.0f, 0.0f};
+                            RE::NiPoint3 contactPosition_tmp = contactPos;
+                            OnMeleeHit::play_sound(playerActor, 0x0003C73C);
+                            OnMeleeHit::play_impact_2(playerActor,
+                                                    RE::TESForm::LookupByID<RE::BGSImpactData>(0x0004BB54), &P_V,
+                                                    &contactPosition_tmp, bone);
+                        });
+                }
+            }
+
+            return RE::BSContainer::ForEachResult::kContinue;
+        });
+    } else {
+        log::warn("Fail to get TES singleton");
     }
 
 
@@ -285,13 +499,13 @@ void ZacOnFrame::CollisionDetection() {
                     if (distThres < 15.0f) distThres = 15.0f;
                     break;
                 case 3:  // races that use claws: werewolf or werebear or trolls or bears or hagraven
-                    if (distThres < 25.0f) distThres = 25.0f;
+                    if (distThres < 15.0f) distThres = 15.0f;
                     break;
                 case 5: // cats
-                    if (distThres < 25.0f) distThres = 25.0f;
+                    if (distThres < 15.0f) distThres = 15.0f;
                     break;
                 case 6: // dwenmer spider
-                    if (distThres < 20.0f) distThres = 20.0f;
+                    if (distThres < 15.0f) distThres = 15.0f;
                     break;
                 //case 7:  // frostbite spider
                 //    if (distThres < 20.0f) distThres = 20.0f;
@@ -394,10 +608,16 @@ void ZacOnFrame::TimeSlowEffect(RE::Actor* playerActor, int64_t slowFrame) {
         return;
     }
 
+    // TODO: have a different frame counter for projectile
+    if (iFrameCount - slowTimeData.frameLastSlowTime < 50 && iFrameCount - slowTimeData.frameLastSlowTime > 0) {
+        log::trace("The last slow time effect is within 50 frames. Don't slow time now");
+        return;
+    }
+
     if (slowTimeData.timeSlowSpell == nullptr) {
         RE::SpellItem* timeSlowSpell = GetTimeSlowSpell();
         if (!timeSlowSpell) {
-            log::error("TimeSlowEffect: failed to get timeslow spell");
+            log::trace("TimeSlowEffect: failed to get timeslow spell");
             return;
         }
         slowTimeData.timeSlowSpell = timeSlowSpell;
@@ -420,6 +640,7 @@ void ZacOnFrame::TimeSlowEffect(RE::Actor* playerActor, int64_t slowFrame) {
     }
 
     slowTimeData.frameShouldRemove = iFrameCount + slowFrame;
+    slowTimeData.frameLastSlowTime = iFrameCount;
 
     for (RE::BSTArrayBase::size_type i = 0; i < slowTimeData.timeSlowSpell->effects.size(); i++) {
         auto effect = slowTimeData.timeSlowSpell->effects.operator[](i);
@@ -1183,4 +1404,5 @@ void ZacOnFrame::CleanBeforeLoad() {
     slowTimeData.clear();
     meleeQueue.Clear();
     iFrameCount = 0;
+    parriedProj.Clear();
 }

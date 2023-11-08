@@ -79,6 +79,7 @@ class DistResult {
 public:
     float dist;
     RE::NiPoint3 contactPoint;
+    bool proj_isLeft; // Warning: this field is not filled if the parry is not between weapon and projectile
 
     DistResult(float d, RE::NiPoint3 p) : dist(d), contactPoint(p) {}
     DistResult() : dist(9999.0f) {}

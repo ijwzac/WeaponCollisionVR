@@ -13,6 +13,17 @@ extern float fRangeMulti;          // controls the effective length of weapon in
 extern float fCollisionDistThres;  // if two weapons are closer than this number, it's a collision
 extern bool bPlayerMustBeAttacking; // Recommended for non-VR players to turn on. VR player should turn off.
 
+// Projectile Parry
+extern bool bEnableProjParry;
+extern float fProjDetectRange; // The range of projectile detection
+extern float fProjLength; // The segment of projectile is from its position to a point ahead of it, calculated using its velocity
+extern float fProjCollisionDistThres; // If weapon and projectile distance is smaller than this number, it's a collision
+extern int64_t iProjCollisionFrame; // Collision is calculated for player's weapon positions for the last X frames
+extern float fAutoAimThres;         // If the cos() of player weapon velocity and enemy position 
+                                    // is greater than this, aim parried projectile to enemy
+extern int64_t iTimeSlowFrameProj;
+extern int64_t iTimeSlowFrameProjAutoAim;
+
 // Parry effect on enemy
 extern float fEnemyPushVelocityMulti;  // the speed multiplier that the enemy will be pushed
 extern float fEnemyPushMaxDist;  // the max distance the enemy will be pushed

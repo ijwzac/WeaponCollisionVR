@@ -17,6 +17,17 @@ bool bEnableTrace = false;
 bool bPlayerMustBeAttacking = false;
 int64_t iSparkSpawn = 12;
 
+// Projectile Parry
+bool bEnableProjParry = true;
+float fProjDetectRange = 800.0f;  // The range of projectile detection
+float fProjCollisionDistThres = 20.0f;         // If weapon and projectile distance is smaller than this number, it's a collision
+float fProjLength = 60.0f;
+int64_t iProjCollisionFrame = 10;  // Collision is calculated for player's weapon positions for the last X frames
+float fAutoAimThres = 0.0f;          // TODO: If the cos() of player weapon velocity and enemy position
+                              // is greater than this, aim parried projectile to enemy
+int64_t iTimeSlowFrameProj = 35;
+int64_t iTimeSlowFrameProjAutoAim = 50; // Not used now
+
 // Enemy
 float fEnemyPushVelocityMulti = 8.0f;
 float fEnemyPushMaxDist = 35.0f;
@@ -106,6 +117,11 @@ void Settings::Main::Load(CSimpleIniA& a_ini) {
         ";(1) Edit settings; (2) Save and close this file; (3) When not in combat, open Skyrim console by \"`\"\n"
         ";(4) Close the console, no need to type anything; (5) Now settings are updated.\n;;;;;;;;;;;;;;;;;;;;;;;;\n;\n;\n"
         "; Set this to false if you want to completely disable this mod. Default:\"true\".");
+
+    detail::get_value(
+        a_ini, bEnableProjParry, section, "EnableProjectileParry",
+        "; Set this to false if you want to disable the parry of projectiles (arrows, firebolts). Default:\"true\".");
+    
 }
 
 void Settings::Difficulty::Load(CSimpleIniA& a_ini) {
@@ -130,6 +146,17 @@ void Settings::Difficulty::Load(CSimpleIniA& a_ini) {
         "; The length of weapon is multiplied by this value. This length is only used by this mod.\n"
         "; Higher value means easier parry. \"1.0\" matches the models of most weapons pretty good. Default:\"1.0\" for VR, \"1.35\" for SE/AE");
 
+    detail::get_value(a_ini, fProjCollisionDistThres, section, "ProjectileParryDistance",
+        "; To trigger a parry to projectile (spell, arrow), how close weapon and projectile should be.\n"
+        "; Higher value means easier parry. Recommend less than 30.0 for VR players, and 120.0~150.0 for "
+        "SE and AE players. Unit: around 1.4 centimeter. Default:\"20.0\" for VR, \"60.0\" for SE/AE");
+
+    detail::get_value(a_ini, fProjLength, section, "ProjectileLength",
+                    "; The length of projectile. Higher value means easier parry. Default:\"100.0\"");
+
+    detail::get_value(a_ini, iProjCollisionFrame, section, "ProjectileParryFrame",
+        "; When calculating the parry of projectile, this mod also considers player's weapon position in the last ProjectileParryFrame frames.\n"
+        "; Higher value means easier parry. Default:\"10\"");
     
     detail::get_value(
         a_ini, fPlayerStaUnableParryThresPer, section, "PlayerUnableToParryThreshold",

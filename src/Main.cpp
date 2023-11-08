@@ -19,6 +19,8 @@ using namespace SKSE::stl;
 
 ZacOnFrame::CollisionRing ZacOnFrame::colBuffer = ZacOnFrame::CollisionRing(10);
 ZacOnFrame::SpeedRing ZacOnFrame::speedBuf = ZacOnFrame::SpeedRing(90);
+ZacOnFrame::SpeedRing ZacOnFrame::weapPosBuf = ZacOnFrame::SpeedRing(90);
+ZacOnFrame::ParriedProj ZacOnFrame::parriedProj = ZacOnFrame::ParriedProj(30);
 ZacOnFrame::SlowTimeEffect ZacOnFrame::slowTimeData = ZacOnFrame::SlowTimeEffect(0);
 OriMeleeQueue meleeQueue = OriMeleeQueue(20);
 
