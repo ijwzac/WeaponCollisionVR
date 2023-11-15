@@ -5,8 +5,10 @@ extern bool bEnableWholeMod;
 
 // Global
 extern int64_t iFrameCount;
+extern int64_t iFrameTriggerPress;
 extern bool bHandToHandLoad;
 extern bool bPlanck;
+extern int64_t iFrameSlowCost;
 
 // Parry difficulty
 extern float fRangeMulti;          // controls the effective length of weapon in this mod
@@ -23,6 +25,11 @@ extern float fAutoAimThres;         // If the cos() of player weapon velocity an
                                     // is greater than this, aim parried projectile to enemy
 extern int64_t iTimeSlowFrameProj;
 extern int64_t iTimeSlowFrameProjAutoAim;
+extern float fProjSlowRatio; // The ratio to slow down projectile, when it comes close to player
+extern float fProjSlowRadius; // When a projectile enters this radius of player, it will be slowed down
+extern int64_t iProjSlowFrame; // How many frames will the projectile be slowed
+extern float fProjGravity; // A fixed number that is used to compensate gravity during slow
+extern float fProjSlowCost; // Magicka cost to slow projectile
 
 // Parry effect on enemy
 extern float fEnemyPushVelocityMulti;  // the speed multiplier that the enemy will be pushed
@@ -76,7 +83,7 @@ extern float fHapticMulti;  // same logic above. Haptic decided by stamina cost
 extern int iHapticLengthMicroSec; 
 
 // Settings for internal usage. Don't change unless you understand the code
-extern bool bEnableTrace; // Turn on the trace
+extern int iTraceLevel;           // Turn on the trace
 extern float fDetectEnemy; // Calculate collisions between player and only enemies within this range
 extern int64_t collisionIgnoreDur; // After a collision, within this number of frames, don't compute collision of the same enemy
                                     // This is to prevent having tens of collisions when weapons are close
@@ -91,6 +98,10 @@ extern int64_t iDelayEnemyHit; // When enemy hit player, delay that event for ho
 extern float fMagicNum1;
 extern float fMagicNum2;
 extern float fMagicNum3;
+
+
+
+spdlog::level::level_enum TraceLevel(int level);
 
 
 // Thanks to: https://github.com/powerof3/CLibUtil
@@ -163,6 +174,10 @@ public:
         void Load(CSimpleIniA& a_ini);
     } sTechnique;
 
+    struct Projectile {
+        void Load(CSimpleIniA& a_ini);
+    } sProjectile;
+
 private:
     Settings() = default;
     Settings(const Settings&) = delete;
@@ -205,7 +220,7 @@ private:
 };
 
 // Code from: https://www.youtube.com/watch?v=afGRuSM2IIc
-class EventProcessor : public RE::BSTEventSink<RE::MenuOpenCloseEvent> {
+class EventProcessor : public RE::BSTEventSink<RE::MenuOpenCloseEvent>, public RE::BSTEventSink<RE::InputEvent*> {
     // Pretty typical singleton setup
     // *Private* constructor/destructor
     // And we *delete* the copy constructors and move constructors.
@@ -232,10 +247,27 @@ public:
         if (event->menuName == "Console"sv && event->opening == false) {
             logger::trace("Console close. Now reload config"); 
             Settings::GetSingleton()->Load();
-            spdlog::level::level_enum level = spdlog::level::info;
-            if (bEnableTrace) level = spdlog::level::trace;
+            spdlog::level::level_enum level = TraceLevel(iTraceLevel);
             spdlog::default_logger()->set_level(level);
         }
+        return RE::BSEventNotifyControl::kContinue;
+    }
+
+    RE::BSEventNotifyControl ProcessEvent(RE::InputEvent* const* eventPtr, RE::BSTEventSource<RE::InputEvent*>*) {
+        if (!eventPtr) return RE::BSEventNotifyControl::kContinue;
+
+        auto* event = *eventPtr;
+        if (!event) return RE::BSEventNotifyControl::kContinue;
+
+        if (event->GetEventType() == RE::INPUT_EVENT_TYPE::kButton) {
+            auto* buttonEvent = event->AsButtonEvent();
+            auto dxScanCode = buttonEvent->GetIDCode();
+            //logger::info("Pressed key {}", dxScanCode);
+            if (dxScanCode == 33) {// 33 is trigger
+                iFrameTriggerPress = iFrameCount;
+            }
+        }
+
         return RE::BSEventNotifyControl::kContinue;
     }
 };

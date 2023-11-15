@@ -5,6 +5,12 @@
 using namespace SKSE;
 using namespace SKSE::log;
 
+std::string formatNiPoint3(RE::NiPoint3& pos) {
+    std::ostringstream stream;
+    stream << "(" << pos.x << ", " << pos.y << ", " << pos.z << ")";
+    return stream.str();
+}
+
 bool IsNiPointZero(const RE::NiPoint3& pos) {
     if (pos.x == 0.0f && pos.y == 0.0f && pos.z == 0.0f) {
         return true;

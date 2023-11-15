@@ -13,7 +13,9 @@ float fDetectEnemy = 600.f;
 bool bShowPlayerWeaponSegment = false;
 bool bShowEnemyWeaponSegment = false;
 int64_t iFrameCount = 0;
-bool bEnableTrace = false;
+int64_t iFrameTriggerPress = 0;
+int64_t iFrameSlowCost = 0;
+int iTraceLevel = 2;
 bool bPlayerMustBeAttacking = false;
 int64_t iSparkSpawn = 12;
 
@@ -21,12 +23,17 @@ int64_t iSparkSpawn = 12;
 bool bEnableProjParry = true;
 float fProjDetectRange = 800.0f;  // The range of projectile detection
 float fProjCollisionDistThres = 20.0f;         // If weapon and projectile distance is smaller than this number, it's a collision
-float fProjLength = 60.0f;
-int64_t iProjCollisionFrame = 10;  // Collision is calculated for player's weapon positions for the last X frames
+float fProjLength = 100.0f;
+int64_t iProjCollisionFrame = 5;  // Collision is calculated for player's weapon positions for the last X frames
 float fAutoAimThres = 0.0f;          // TODO: If the cos() of player weapon velocity and enemy position
                               // is greater than this, aim parried projectile to enemy
-int64_t iTimeSlowFrameProj = 35;
+int64_t iTimeSlowFrameProj = 30;
 int64_t iTimeSlowFrameProjAutoAim = 50; // Not used now
+float fProjSlowRatio = 0.15f;
+float fProjSlowRadius = 250.0f;
+int64_t iProjSlowFrame = 60;
+float fProjGravity = 100.0f;
+float fProjSlowCost = 10.0f;
 
 // Enemy
 float fEnemyPushVelocityMulti = 8.0f;
@@ -103,6 +110,7 @@ void Settings::Load() {
     sEffectOnEnemy.Load(ini);
     sEffectOnPlayer.Load(ini);
     sExperience.Load(ini);
+    sProjectile.Load(ini);
     sTechnique.Load(ini);
 
     err = ini.SaveFile(path);
@@ -151,12 +159,6 @@ void Settings::Difficulty::Load(CSimpleIniA& a_ini) {
         "; Higher value means easier parry. Recommend less than 30.0 for VR players, and 120.0~150.0 for "
         "SE and AE players. Unit: around 1.4 centimeter. Default:\"20.0\" for VR, \"60.0\" for SE/AE");
 
-    detail::get_value(a_ini, fProjLength, section, "ProjectileLength",
-                    "; The length of projectile. Higher value means easier parry. Default:\"100.0\"");
-
-    detail::get_value(a_ini, iProjCollisionFrame, section, "ProjectileParryFrame",
-        "; When calculating the parry of projectile, this mod also considers player's weapon position in the last ProjectileParryFrame frames.\n"
-        "; Higher value means easier parry. Default:\"10\"");
     
     detail::get_value(
         a_ini, fPlayerStaUnableParryThresPer, section, "PlayerUnableToParryThreshold",
@@ -384,16 +386,52 @@ void Settings::Experience::Load(CSimpleIniA& a_ini) {
 }
 
 
+void Settings::Projectile::Load(CSimpleIniA& a_ini) {
+    static const char* section = "==========6. Projectile Parry==========";
+
+    
+    detail::get_value(a_ini, fProjLength, section, "ProjectileLength",
+        "; The length of each projectile. Higher value means easier parry. Default:\"100.0\"");
+
+    detail::get_value(a_ini, iProjCollisionFrame, section, "ProjectileParryFrame",
+        "; When calculating the parry of projectile, this mod also considers player's weapon position in "
+        "the last ProjectileParryFrame frames.\n"
+        "; Higher value means easier parry, but don't make it too large. Default:\"5\"");
+
+    detail::get_value(a_ini, fProjSlowRadius, section, "ProjectileSlowRadius",
+        "; You can SLOW DOWN projectiles like Neo in The Matrix using your magicka!!!"
+        "; A projectile will be slowed down for a few frames if:\n"
+        "; (1) Player has more than SlowMagickaCost\n"
+        "; (2) Player is pressing the trigger on VR controller\n"
+        "; \n"
+        "; \n"
+        "; This is the radius of the slow down effect. Higher value means earlier slow down. Default:\"250.0\"");
+
+    detail::get_value(a_ini, fProjSlowCost, section, "ProjectileSlowMagickaCost",
+        "; The magicka cost to slow down the projectile.\n"
+        "; If not enough, the projectile won't be slowed. Default:\"10.0\"");
+
+    detail::get_value(a_ini, fProjSlowRatio, section, "ProjectileSlowRatio",
+        "; When slowed down, projectile_new_speed = projectile_original_speed * ProjectileSlowRatio.\n"
+        "; Lower value means slower speed. Default:\"0.15\"");
+
+    detail::get_value(a_ini, iProjSlowFrame, section, "ProjectileSlowFrame",
+        "; How many frames will the projectile be slowed.\n"
+        "; Default:\"60\"");
+}
+
+
+
 void Settings::Technique::Load(CSimpleIniA& a_ini) {
-    static const char* section = "==========6. Other Settings==========";
+    static const char* section = "==========Other Settings==========";
 
     detail::get_value(
-        a_ini, bEnableTrace, section, "EnableTrace",
+        a_ini, iTraceLevel, section, "TraceLevel",
         "; ===WARNING: normally you don't need to change any value below. Please read instructions carefully before any "
         "change.\n"
         ";\n"
-        "; Turn on the trace, printing to C:\\Users\\XXX\\Documents\\My Games\\Skyrim VR\\SKSE\\WeaponCollision.log\n"
-        "; In the worst case, turning this on makes the file grow at 10MB/minute, and might slow the game down (very unlikely), but useful when you report bugs to me. Default:\"false\"");
+        "; Set to 2 to only have info. 1 to turn on debug. 0 to turn on trace. Printing to C:\\Users\\XXX\\Documents\\My Games\\Skyrim VR\\SKSE\\WeaponCollision.log\n"
+        "; In the worst case, turning this on makes the file grow at 10MB/minute, and might slow the game down (very unlikely), but useful when you report bugs to me. Default:\"2\"");
 
 
     detail::get_value(a_ini, fDetectEnemy, section, "EnemyDetectionRange",
@@ -439,6 +477,11 @@ void Settings::Technique::Load(CSimpleIniA& a_ini) {
         "; Default:\"90\"");
 
     detail::get_value(
+        a_ini, fProjGravity, section, "ProjectileGravity",
+        "; When projectile is slowed, this is used to compensate gravity so it doesn't drop rapidly.\n"
+        "; Default:\"10\"");
+
+    detail::get_value(
         a_ini, iDelayEnemyHit, section, "DelayEnemyHitOnPlayer",
         "; This one is tricky but important. This mod delays melee hit events from enemy to player,\n"
         "; because in Skyrim enemies have some cheating attack animations, where they hit you a few frames before their weapon reaches you\n"
@@ -448,3 +491,18 @@ void Settings::Technique::Load(CSimpleIniA& a_ini) {
         "; Default:\"8\"");
 }
     
+spdlog::level::level_enum TraceLevel(int level) {
+    switch (iTraceLevel) {
+        case 0:
+            return spdlog::level::trace;
+        case 1:
+            return spdlog::level::debug;
+        case 2:
+            return spdlog::level::info;
+        case 3:
+            return spdlog::level::warn;
+        case 4:
+            return spdlog::level::err;
+    }
+    return spdlog::level::info;
+}

@@ -364,12 +364,12 @@ namespace ZacOnFrame {
     };
 
     class SpeedRing {
+    public:
         std::vector<WeaponPos> bufferL;
         std::vector<WeaponPos> bufferR;
         std::size_t capacity; // how many latest frames are stored
         std::size_t indexCurrentL;
         std::size_t indexCurrentR;
-    public:
         SpeedRing(std::size_t cap) : bufferL(cap), bufferR(cap), capacity(cap), indexCurrentR(0), indexCurrentL(0) {}
         
         void Clear() {
@@ -414,7 +414,8 @@ namespace ZacOnFrame {
         DistResult ShortestDisRecently(std::size_t N, RE::NiPoint3 posProj, RE::NiPoint3 velocity) {
             float shortestDist = 9999.0f;
             DistResult shortestResult = DistResult();
-            RE::NiPoint3 posProjFakeEnd = posProj + velocity / velocity.Length() * fProjLength; 
+            RE::NiPoint3 posProjFakeEnd = posProj + velocity / velocity.Length() * fProjLength / 2; 
+            posProj = posProj - velocity / velocity.Length() * fProjLength / 2; 
             if (N == 0 || N > capacity) {
                 // Return zero velocity or handle error
                 return DistResult();
@@ -466,9 +467,15 @@ namespace ZacOnFrame {
     extern SlowTimeEffect slowTimeData;
 
     class ParriedProj {
-        std::vector<RE::Projectile*> buffer;
+    public:
+        std::vector<RE::Projectile*> bufParried;
+        std::vector<RE::Projectile*> bufSlowed;
         std::vector<int64_t> bufferFrame;
+        std::vector<int64_t> bufferFrameSlow;
+        std::vector<float> bufSlowVelZ;
+        std::vector<bool> bufSlowRestored;
         std::size_t indexCurrent;
+        std::size_t indexCurrentSlow;
         std::size_t capacity;
 
         //// Also has some data to log the previous positions of a projectile, to find arrows in wall
@@ -488,9 +495,16 @@ namespace ZacOnFrame {
         //std::vector<ProjRecord*> bufferProjRecord;
         //std::size_t indexRecordCurrent;
 
-    public:
         ParriedProj(std::size_t cap)
-            : buffer(cap), bufferFrame(cap), indexCurrent(0), capacity(cap) {
+            : bufParried(cap),
+              bufSlowed(cap),
+              bufferFrame(cap),
+              bufferFrameSlow(cap),
+              bufSlowVelZ(cap),
+              bufSlowRestored(cap),
+              indexCurrent(0),
+              indexCurrentSlow(0),
+              capacity(cap) {
             //for (size_t i = 0; i < cap; i++) {
             //    bufferProjRecord.push_back(nullptr);
             //}
@@ -499,9 +513,14 @@ namespace ZacOnFrame {
         void Clear() {
             log::trace("In ParriedProj::Clear");
             for (size_t i = 0; i < capacity; i++) {
-                buffer[i] = nullptr;
+                bufParried[i] = nullptr;
+                bufSlowed[i] = nullptr;
                 bufferFrame[i] = -1;
+                bufSlowRestored[i] = false;
+                bufSlowVelZ[i] = 0.0f;
                 indexCurrent = 0;
+                bufferFrameSlow[i] = -1;
+                indexCurrentSlow = 0;
                 //delete bufferProjRecord[i];
                 //bufferProjRecord[i] = nullptr;
             }
@@ -558,7 +577,7 @@ namespace ZacOnFrame {
 
         // Record a parried projectile
         void PushParried(RE::Projectile* proj) { 
-            buffer[indexCurrent] = proj;
+            bufParried[indexCurrent] = proj;
             bufferFrame[indexCurrent] = iFrameCount;
             indexCurrent = (indexCurrent + 1) % capacity;
         }
@@ -566,14 +585,34 @@ namespace ZacOnFrame {
         // When calculating isParried, we should also check the frame: projectile pointer seems to be reused by the game
         bool IsParried(RE::Projectile* proj) {
             for (size_t i = 0; i < capacity; i++) {
-                if (buffer[i] == proj) {
-                    if (iFrameCount - bufferFrame[i] < 30) {
+                if (bufParried[i] == proj) {
+                    if (iFrameCount - bufferFrame[i] < 60) {
                         return true;
                     }
                 }
             }
             return false;
         }
+
+        void PushSlowed(RE::Projectile* proj, float velZ) {
+            bufSlowed[indexCurrentSlow] = proj;
+            bufferFrameSlow[indexCurrentSlow] = iFrameCount;
+            bufSlowRestored[indexCurrentSlow] = false;
+            bufSlowVelZ[indexCurrentSlow] = velZ;
+            indexCurrentSlow = (indexCurrentSlow + 1) % capacity;
+        }
+
+        size_t IsSlowed(RE::Projectile* proj) {
+            for (size_t i = 0; i < capacity; i++) {
+                if (bufSlowed[i] == proj) {
+                    if (iFrameCount - bufferFrameSlow[i] < 90) {
+                        return i;
+                    }
+                }
+            }
+            return 99999;
+        }
+
     };
     extern ParriedProj parriedProj;
 

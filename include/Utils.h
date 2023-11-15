@@ -1,5 +1,8 @@
 #pragma once
 
+#include <string>
+
+std::string formatNiPoint3(RE::NiPoint3& pos);
 
 bool IsNiPointZero(const RE::NiPoint3& pos);
 

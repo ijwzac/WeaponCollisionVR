@@ -68,6 +68,10 @@ namespace {
     void MessageHandler(SKSE::MessagingInterface::Message* a_msg) {
         log::trace("MessageHandler called");
         switch (a_msg->type) {
+            case SKSE::MessagingInterface::kInputLoaded: {
+                auto& eventProcessor = EventProcessor::GetSingleton();
+                RE::BSInputDeviceManager::GetSingleton()->AddEventSink(&eventProcessor);
+            }
             case SKSE::MessagingInterface::kPostPostLoad: {
                 /*log::info("kPostPostLoad");
                 const auto precisionAPI =
@@ -145,8 +149,7 @@ SKSEPluginLoad(const LoadInterface* skse) {
         logger::error("Exception caught when loading settings! Default settings will be used");
     }
 
-    spdlog::level::level_enum level = spdlog::level::info;
-    if (bEnableTrace) level = spdlog::level::trace;
+    spdlog::level::level_enum level = TraceLevel(iTraceLevel);
     spdlog::default_logger()->set_level(level);
 
     if (bEnableWholeMod == false) {

@@ -37,7 +37,7 @@ void ZacOnFrame::OnFrameUpdate() {
     isOurFnRunning = true;
     // Get the current time point
     auto now = std::chrono::high_resolution_clock::now();
-    bool isPaused;
+    bool isPaused = true;
     if (bEnableWholeMod) {
         if (const auto ui{RE::UI::GetSingleton()}) {
             if (!ui->GameIsPaused()) {  // Not in menu, not in load, not in console
@@ -58,7 +58,7 @@ void ZacOnFrame::OnFrameUpdate() {
         total_run_time += duration.count();
         auto average_run_time = total_run_time / run_time_count++;
         if (run_time_count % 500 == 1) {
-            log::info("Exe time of our fn:{} us. Highest:{}. Average:{}. Total:{}. Count:{}", duration.count(), highest_run_time,
+            log::trace("Exe time of our fn:{} us. Highest:{}. Average:{}. Total:{}. Count:{}", duration.count(), highest_run_time,
                       average_run_time, total_run_time, run_time_count);
         }
 
@@ -152,6 +152,9 @@ void ZacOnFrame::CollisionDetection() {
     speedBuf.Push(WeaponPos(posPlayerHandL, posWeaponFixedMiddleL), true);
     speedBuf.Push(WeaponPos(posPlayerHandR, posWeaponFixedMiddleR), false);
 
+    RE::NiPoint3 leftSpeed = speedBuf.GetVelocity(5, true);
+    RE::NiPoint3 rightSpeed = speedBuf.GetVelocity(5, false);
+
     
     if (playerActor->IsBlocking()) {
         log::trace("Player is blocking");
@@ -182,6 +185,7 @@ void ZacOnFrame::CollisionDetection() {
     std::vector<RE::TESObjectREFR*> vNearbyProj;
     if (const auto TES = RE::TES::GetSingleton(); TES && bEnableProjParry) {
         TES->ForEachReferenceInRange(playerRef, fProjDetectRange, [&](RE::TESObjectREFR& b_ref) {
+            // TODO:Seems that the code below doesn't fire every frame!
             auto proj = b_ref.AsProjectile();
             if (!proj) return RE::BSContainer::ForEachResult::kContinue;
             int projType = -1;
@@ -235,8 +239,8 @@ void ZacOnFrame::CollisionDetection() {
             RE::NiPoint3 velocity = projRuntime.linearVelocity;
 
             // Check if the velocity is too low
-            if (velocity.Length() < 300.0f) {
-                log::trace("Too slow Asprojectile. Name:{}. Speed:{}. Pos:{},{},{}",
+            if (velocity.Length() < 100.0f) {
+                log::debug("Too slow Asprojectile. Name:{}. Speed:{}. Pos:{},{},{}",
                            proj->GetName(), velocity.Length(), proj->GetPositionX(),
                            proj->GetPositionY(), proj->GetPositionZ());
                 return RE::BSContainer::ForEachResult::kContinue;
@@ -279,28 +283,121 @@ void ZacOnFrame::CollisionDetection() {
                         proj->GetPositionX(),
                         proj->GetPositionY(), proj->GetPositionZ());
 
+            // Option 1:
+            //// Slow the projectile down, just for once, if player's weapon speed is high enough
+            //auto distProjPlayer = proj->GetPosition().GetDistance(playerActor->GetPosition());
+            //if (parriedProj.IsSlowed(proj) == false && distProjPlayer < fProjSlowRadius &&
+            //    (leftSpeed.SqrLength() > fPlayerWeaponSpeedRewardThres2 ||
+            //     rightSpeed.SqrLength() > fPlayerWeaponSpeedRewardThres2)) {
+            //    // TODO: delete unnecessary angle, velocity, 
+            //    log::debug("About to slow a projectile. Dist: {}", distProjPlayer);
+            //    parriedProj.PushSlowed(proj, projRuntime.linearVelocity, proj->GetAngle());
+            //    projRuntime.linearVelocity *= fProjSlowRatio;
+            //}
+
+            // Option 2:
+            // When the player is pressing the trigger, enters slow motion if the projectile is close enough once
+            // However, this alone is not good, because slow motion takes effect a few frames later, not immediately
+
+            // Option 3:
+            // When the player is pressing the trigger, slow the projectile down
+            auto inputManager = RE::BSInputDeviceManager::GetSingleton();
+            auto distProjPlayer = proj->GetPosition().GetDistance(playerActor->GetPosition());
+            if (parriedProj.IsSlowed(proj) == 99999 && distProjPlayer < fProjSlowRadius && inputManager) { // 99999 means not slowed
+                //auto vrControllerL = inputManager->GetVRControllerLeft(); 
+                //auto vrControllerR = inputManager->GetVRControllerRight();
+                //auto keyboard = inputManager->GetKeyboard();
+                //auto mouse = inputManager->GetMouse();
+                //auto virtualKeyboard = inputManager->GetVirtualKeyboard();
+                //auto Gamepad = inputManager->GetGamepad();
+                //auto GamepadHandler = inputManager->GetGamepadHandler();
+                //// All of them below are not null. However, the map size of controllers and virtualKeyboard are 0
+                //// Also, even if Gamepad is not null, Gamepad->IsEnabled() can crash the program
+                //// The map size of mouse and keboard is very large, but accessing them crashes the program
+                //if (vrControllerL)
+                //    log::info("vrControllerL not null. Enabled:{}. butNameMapSize:{}. deviceButMapSize:{}", vrControllerL->IsEnabled(),
+                //              vrControllerL->buttonNameIDMap.size(), vrControllerL->deviceButtons.size());
+                //if (vrControllerR)
+                //    log::info("vrControllerR not null. Enabled:{}. butNameMapSize:{}. deviceButMapSize:{}", vrControllerR->IsEnabled(),
+                //              vrControllerR->buttonNameIDMap.size(), vrControllerR->deviceButtons.size());
+                //if (keyboard)
+                //    log::info("keyboard not null. Enabled:{}. butNameMapSize:{}. deviceButMapSize:{}", keyboard->IsEnabled(),
+                //              keyboard->buttonNameIDMap.size(), keyboard->deviceButtons.size());
+                //if (mouse)
+                //    log::info("mouse not null. Enabled:{}. butNameMapSize:{}. deviceButMapSize:{}", mouse->IsEnabled(),
+                //              mouse->buttonNameIDMap.size(), mouse->deviceButtons.size());
+                //if (virtualKeyboard)
+                //    log::info("virtualKeyboard not null. Enabled:{}. butNameMapSize:{}. deviceButMapSize:{}", virtualKeyboard->IsEnabled(),
+                //              virtualKeyboard->buttonNameIDMap.size(), virtualKeyboard->deviceButtons.size());
+
+                if (iFrameCount - iFrameTriggerPress < 3 && iFrameCount - iFrameTriggerPress >= 0) {
+                    bool byPassMagCheck = false || (fProjSlowCost == 0);
+                    if (iFrameCount - iFrameSlowCost < 30 && iFrameCount - iFrameSlowCost >= 0) {
+                        byPassMagCheck = true;
+                    }
+                    // Check player magicka
+                    auto curMag = playerActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kMagicka);
+                    if (curMag >= fProjSlowCost || byPassMagCheck) {
+                        if (!byPassMagCheck) {
+                            playerActor->AsActorValueOwner()->RestoreActorValue(
+                                RE::ACTOR_VALUE_MODIFIER::kDamage, RE::ActorValue::kMagicka, -fProjSlowCost);
+                            iFrameSlowCost = iFrameCount;
+                        }
+                        float oriZ = projRuntime.linearVelocity.z;
+                        projRuntime.linearVelocity *= fProjSlowRatio;
+                        /*projRuntime.linearVelocity.y *= fProjSlowRatio;
+                        projRuntime.linearVelocity.z *= fProjSlowRatio;*/
+                        log::debug("Trigger pressed. Magicka before cost:{}. Speed after slow down:{}", curMag,
+                                   formatNiPoint3(projRuntime.linearVelocity));
+                        parriedProj.PushSlowed(proj, oriZ);
+
+                    } else {
+                        log::debug("Trigger pressed. Magicka not enough:{}", curMag);
+                    }
+                   
+                }
+            }
+
+            if (auto indexSlowed = parriedProj.IsSlowed(proj); indexSlowed != 99999) {
+                // If the slow is still effective, compensate the gravity
+                auto frameDiff = iFrameCount - parriedProj.bufferFrameSlow[indexSlowed];
+                log::info("Frame diff:{}. iProjSlowFrame:{}", frameDiff, iProjSlowFrame);
+                if (frameDiff < iProjSlowFrame && frameDiff > 0) {
+                    log::info("Compensate gravity. Current z:{}", projRuntime.linearVelocity.z);
+                    //projRuntime.linearVelocity.z += fProjGravity * frameDiff;
+                    projRuntime.linearVelocity.z = parriedProj.bufSlowVelZ[indexSlowed] * fProjSlowRatio;
+                }
+
+                // If the slow should expire, restore the velocity
+                if (frameDiff >= iProjSlowFrame && parriedProj.bufSlowRestored[indexSlowed] == false) {
+                    projRuntime.linearVelocity /= fProjSlowRatio;
+                    //projRuntime.linearVelocity.y /= fProjSlowRatio;
+                    parriedProj.bufSlowRestored[indexSlowed] = true;
+                    //projRuntime.linearVelocity.z = parriedProj.bufSlowVelZ[indexSlowed];
+                    log::info("Restore speed. Final speed:{}", formatNiPoint3(projRuntime.linearVelocity));
+                }
+            }
+
 
             // See if player successfully parries it
-            // Increase the weapon range for missle type (fire ball)
-            float oldRange = fRangeMulti;
-            if (projType == 7) {
-                fRangeMulti += 0.4f;
-            }
             DistResult shortestDist =
                 weapPosBuf.ShortestDisRecently(iProjCollisionFrame, proj->GetPosition(), velocity);
-            if (shortestDist.dist > fProjCollisionDistThres || (projType == 7 && shortestDist.dist > fProjCollisionDistThres + 5.5f)) {
-                log::trace("Parry no success. Dist:{}", shortestDist.dist);
+            if (shortestDist.dist > fProjCollisionDistThres || (projType == 7 && shortestDist.dist > fProjCollisionDistThres + 10.0f)) {
+                log::debug("Parry projectile no success. Dist:{}", shortestDist.dist);
+                log::debug("Left weapon bot:{}. top:{}",
+                           formatNiPoint3(weapPosBuf.bufferL[weapPosBuf.indexCurrentL].bottom),
+                           formatNiPoint3(weapPosBuf.bufferL[weapPosBuf.indexCurrentL].top));
+                log::debug("Right weapon bot:{}. top:{}",
+                           formatNiPoint3(weapPosBuf.bufferR[weapPosBuf.indexCurrentR].bottom),
+                           formatNiPoint3(weapPosBuf.bufferR[weapPosBuf.indexCurrentR].top));
                 return RE::BSContainer::ForEachResult::kContinue;
-            }
-            if (projType == 7) {
-                fRangeMulti = oldRange;
             }
 
             // Mark as parried, to avoid being parried multiple times
             parriedProj.PushParried(proj);
 
             auto oriVel = projRuntime.linearVelocity;
-            log::trace("Parried! Ori Velocity:{},{},{}", oriVel.x, oriVel.y, oriVel.z);
+            log::trace("Parried projectile! Ori Velocity:{},{},{}", oriVel.x, oriVel.y, oriVel.z);
                     
 
             //// Option 1: Set the projectile to fly to its caster
@@ -310,26 +407,29 @@ void ZacOnFrame::CollisionDetection() {
             //projRuntime.linearVelocity = vecToCaster; 
 
             // Option 2: Set the projectile to fly to player's weapon direction
-            RE::NiPoint3 vecWeapon = speedBuf.GetVelocity(5, shortestDist.proj_isLeft);
+            RE::NiPoint3 vecWeapon = shortestDist.proj_isLeft ? leftSpeed : rightSpeed;
             if (vecWeapon.Length() > 0.0f) {
                 vecWeapon /= vecWeapon.Length();
                 if (oriVel.Length() > 0.0f) {
-                    vecWeapon += oriVel / oriVel.Length() / 2;
+                    if (projType == 7) {
+                        vecWeapon += oriVel / oriVel.Length() / 5;
+                        vecWeapon += RE::NiPoint3(0, 0, 0.3f);
+                    } else {
+                        vecWeapon += oriVel / oriVel.Length() / 2;
+                    }
+                    
                 }
             } else {
                 vecWeapon = RE::NiPoint3(0, 0, 1.0);
             }
-            if (projType == 7) {
-                vecWeapon += RE::NiPoint3(0, 0, 0.3f);
-                vecWeapon /= vecWeapon.Length();
-            }
+            vecWeapon /= vecWeapon.Length();
             vecWeapon *= oriVel.Length();
             projRuntime.linearVelocity = vecWeapon; 
-            if (projType == 4) {
+            /*if (projType == 4) {
                 projRuntime.linearVelocity *= 0.5f;
             } else if (projType == 7) {
                 projRuntime.linearVelocity *= 0.8f;
-            } 
+            } */
            
 
             // Deprecated: Trying to change owner to player, but not useful
@@ -425,7 +525,7 @@ void ZacOnFrame::CollisionDetection() {
             }
             // TODO: Check if NPC is enemy
             
-
+            
             // TODO: consider make it that even if NPC is not attacking, still enable collision
 
             // TODO: how to see if NPC is using both two weapons? Flags kRotatingAttack isn't for this
@@ -559,7 +659,8 @@ void ZacOnFrame::CollisionDetection() {
                 }
 
                 // create a new collision
-                auto speed = speedBuf.GetVelocity(5, isPlayerLeft).SqrLength();
+                auto playerWeapSpeed = isPlayerLeft ? leftSpeed : rightSpeed;
+                auto speed = playerWeapSpeed.SqrLength();
 
                 // push the enemy away by this velocity. Will be used for the next few frames
                 RE::hkVector4 pushEnemyVelocity =
@@ -570,7 +671,6 @@ void ZacOnFrame::CollisionDetection() {
                 if (auto enemyRef = static_cast<RE::TESObjectREFR*>(actorNPC); enemyRef) {
                     angleZ = enemyRef->GetAngleZ();
                 }
-                RE::NiPoint3 playerWeapSpeed = speedBuf.GetVelocity(5, isPlayerLeft);
                 bool isRotClockwise = ShouldRotateClockwise(playerActor->GetPosition(), actorNPC->GetPosition(), playerWeapSpeed);
                 int64_t rotDurationFrame = RotateFrame(playerWeapSpeed.SqrLength());
 
@@ -578,8 +678,16 @@ void ZacOnFrame::CollisionDetection() {
                                      CalculatePushDist(true, speed), contactToEnemyHand, isEnemyLeft,
                                      pushEnemyVelocity, angleZ,
                                      isRotClockwise, rotDurationFrame);
-                log::trace("Collision with {} on frame {}", col.getEnemy()->GetBaseObject()->GetName(),
+                log::debug("Successfully parried {} on frame {}", col.getEnemy()->GetBaseObject()->GetName(),
                            col.getFrame());
+                log::debug("Player weapon isLeft:{}, lBot:{}, lTop:{}", isPlayerLeft,
+                           formatNiPoint3(posWeaponBottomL), formatNiPoint3(posWeaponTopL));
+                log::debug("Player weapon rBot:{}, rTop:{}", formatNiPoint3(posWeaponBottomR),
+                           formatNiPoint3(posWeaponTopR));
+                log::debug("Enemy weapon isLeft:{}, lBot:{}, lTop:{}", isEnemyLeft,
+                           formatNiPoint3(posNPCWeaponBottomL), formatNiPoint3(posNPCWeaponTopL));
+                log::debug("Enemy weapon rBot:{}, rTop:{}", formatNiPoint3(posNPCWeaponBottomR),
+                           formatNiPoint3(posNPCWeaponTopR));
                 colBuffer.PushCopy(col);
 
                 // update PlayerCollision to record this as the latest collision
