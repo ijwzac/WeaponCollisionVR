@@ -19,6 +19,7 @@ int iTraceLevel = 2;
 bool bPlayerMustBeAttacking = false;
 int64_t iSparkSpawn = 12;
 
+
 // Projectile Parry
 bool bEnableProjParry = true;
 float fProjDetectRange = 800.0f;  // The range of projectile detection
@@ -480,6 +481,11 @@ void Settings::Technique::Load(CSimpleIniA& a_ini) {
         a_ini, fProjGravity, section, "ProjectileGravity",
         "; When projectile is slowed, this is used to compensate gravity so it doesn't drop rapidly.\n"
         "; Default:\"10\"");
+
+    // Deprecated: no longer used
+    //detail::get_value(a_ini, bSwitchHiggsCollision, section, "SwitchHiggsWeaponCollision",
+    //    "; If you set EnableWeaponCollision to be 0 in higgs_vr.ini on purpose, you may want to set this to false.\n"
+    //    "; Otherwise, please leave this to be true, since this can make projectiles parry less buggy. Default:\"true\"");
 
     detail::get_value(
         a_ini, iDelayEnemyHit, section, "DelayEnemyHitOnPlayer",

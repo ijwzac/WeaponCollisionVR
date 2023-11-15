@@ -2,6 +2,9 @@
 
 #include <string>
 
+//void DisableHiggsWeapCol();
+//void EnableHiggsWeapCol();
+
 std::string formatNiPoint3(RE::NiPoint3& pos);
 
 bool IsNiPointZero(const RE::NiPoint3& pos);

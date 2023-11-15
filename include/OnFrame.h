@@ -423,13 +423,14 @@ namespace ZacOnFrame {
             for (int i = 0; i < 2; i++) {
                 bool isLeft = i == 0 ? true : false;
                 std::size_t currentIdx = isLeft ? indexCurrentL : indexCurrentR;
-                const std::vector<WeaponPos>& buffer = isLeft ? bufferL : bufferR;
+                std::vector<WeaponPos>& buffer = isLeft ? bufferL : bufferR;
                 for (std::size_t frameCount = 0; frameCount < N; frameCount++) {
                     std::size_t frame = (currentIdx - 1 - frameCount + capacity) % capacity;
                     RE::NiPoint3 posBottom = buffer[frame].bottom;
                     RE::NiPoint3 posTop = buffer[frame].top;
                     auto distResult = OnMeleeHit::Dist(posBottom, posTop, posProj, posProjFakeEnd);
                     if (distResult.dist < shortestDist) {
+                        shortestDist = distResult.dist;
                         distResult.proj_isLeft = isLeft;
                         shortestResult = distResult;
                     }

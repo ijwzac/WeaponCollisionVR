@@ -5,6 +5,54 @@
 using namespace SKSE;
 using namespace SKSE::log;
 
+//void DisableHiggsWeapCol() {
+//    if (iFrameCount - iFrameDisableHiggs > 90 || iFrameCount - iFrameDisableHiggs < 0) {
+//        iFrameDisableHiggs = iFrameCount;
+//        auto papyrusVM = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+//        if (papyrusVM && bSwitchHiggsCollision && !isHiggsDisabled) {
+//            if (papyrusVM->TypeIsValid("HiggsVR"sv)) {
+//                log::debug("HiggsVR is installed. About to disable Higgs weapon collision");
+//                RE::BSScript::IFunctionArguments *higgsLeft, *higgsRight;
+//                RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> callback;
+//                /*higgsLeft = RE::MakeFunctionArguments(true);
+//                higgsRight = RE::MakeFunctionArguments(false);
+//                papyrusVM->DispatchStaticCall("HiggsVR"sv, "DisableWeaponCollision"sv, higgsLeft, callback);
+//                papyrusVM->DispatchStaticCall("HiggsVR"sv, "DisableWeaponCollision"sv, higgsRight, callback);*/
+//                higgsLeft = RE::MakeFunctionArguments("EnableWeaponCollision"sv, 0.0f);
+//                papyrusVM->DispatchStaticCall("HiggsVR"sv, "SetSetting"sv, higgsLeft, callback);
+//                isHiggsDisabled = true;
+//            } else {
+//                log::debug("HiggsVR is NOT installed");
+//            }
+//        }
+//    }
+//}
+//void EnableHiggsWeapCol() {
+//    if ((isHiggsDisabled && iFrameCount - iFrameDisableHiggs >= 180 && iFrameDisableHiggs != 0 &&
+//            bSwitchHiggsCollision) ||
+//        iFrameCount == 90 && bSwitchHiggsCollision) { 
+//        // iFrameCount == 90 means this is the first 90th frame after load. We should re-enable after loading
+//        iFrameDisableHiggs = 0;
+//        auto papyrusVM = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+//        if (papyrusVM) {
+//            if (papyrusVM->TypeIsValid("HiggsVR"sv)) {
+//                log::debug("HiggsVR is installed. About to re-enable Higgs weapon collision");
+//                RE::BSScript::IFunctionArguments *higgsLeft, *higgsRight;
+//                RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> callback;
+//                higgsLeft = RE::MakeFunctionArguments("EnableWeaponCollision"sv, 1.0f);
+//                papyrusVM->DispatchStaticCall("HiggsVR"sv, "SetSetting"sv, higgsLeft, callback);
+//                isHiggsDisabled = false;
+//                // higgsLeft = RE::MakeFunctionArguments(true);
+//                // higgsRight = RE::MakeFunctionArguments(false);
+//                // papyrusVM->DispatchStaticCall("HiggsVR"sv, "EnableWeaponCollision"sv, higgsLeft, callback);
+//                // papyrusVM->DispatchStaticCall("HiggsVR"sv, "EnableWeaponCollision"sv, higgsRight, callback);
+//            } else {
+//                log::debug("HiggsVR is NOT installed");
+//            }
+//        }
+//    }
+//}
+
 std::string formatNiPoint3(RE::NiPoint3& pos) {
     std::ostringstream stream;
     stream << "(" << pos.x << ", " << pos.y << ", " << pos.z << ")";

@@ -28,6 +28,8 @@ long long highest_run_time = 0;
 long long total_run_time = 0;
 long long run_time_count = 1;
 
+
+
 // I am trying a not very normal approach here: fire the original event first
 void ZacOnFrame::OnFrameUpdate() {
 
@@ -57,8 +59,8 @@ void ZacOnFrame::OnFrameUpdate() {
         if (highest_run_time < duration.count()) highest_run_time = duration.count();
         total_run_time += duration.count();
         auto average_run_time = total_run_time / run_time_count++;
-        if (run_time_count % 500 == 1) {
-            log::trace("Exe time of our fn:{} us. Highest:{}. Average:{}. Total:{}. Count:{}", duration.count(), highest_run_time,
+        if (run_time_count % 1000 == 1) {
+            log::info("Exe time of our fn:{} us. Highest:{}. Average:{}. Total:{}. Count:{}", duration.count(), highest_run_time,
                       average_run_time, total_run_time, run_time_count);
         }
 
@@ -238,6 +240,7 @@ void ZacOnFrame::CollisionDetection() {
             RE::ObjectRefHandle casterHandle = projRuntime.shooter;
             RE::NiPoint3 velocity = projRuntime.linearVelocity;
 
+
             // Check if the velocity is too low
             if (velocity.Length() < 100.0f) {
                 log::debug("Too slow Asprojectile. Name:{}. Speed:{}. Pos:{},{},{}",
@@ -282,6 +285,8 @@ void ZacOnFrame::CollisionDetection() {
             log::trace("Found Asprojectile. Name:{}. Speed:{}. Pos:{},{},{}", proj->GetName(), velocity.Length(),
                         proj->GetPositionX(),
                         proj->GetPositionY(), proj->GetPositionZ());
+
+            
 
             // Option 1:
             //// Slow the projectile down, just for once, if player's weapon speed is high enough
@@ -332,7 +337,7 @@ void ZacOnFrame::CollisionDetection() {
 
                 if (iFrameCount - iFrameTriggerPress < 3 && iFrameCount - iFrameTriggerPress >= 0) {
                     bool byPassMagCheck = false || (fProjSlowCost == 0);
-                    if (iFrameCount - iFrameSlowCost < 30 && iFrameCount - iFrameSlowCost >= 0) {
+                    if (iFrameCount - iFrameSlowCost < 90 && iFrameCount - iFrameSlowCost >= 0) {
                         byPassMagCheck = true;
                     }
                     // Check player magicka
@@ -361,9 +366,9 @@ void ZacOnFrame::CollisionDetection() {
             if (auto indexSlowed = parriedProj.IsSlowed(proj); indexSlowed != 99999) {
                 // If the slow is still effective, compensate the gravity
                 auto frameDiff = iFrameCount - parriedProj.bufferFrameSlow[indexSlowed];
-                log::info("Frame diff:{}. iProjSlowFrame:{}", frameDiff, iProjSlowFrame);
+                log::trace("Frame diff:{}. iProjSlowFrame:{}", frameDiff, iProjSlowFrame);
                 if (frameDiff < iProjSlowFrame && frameDiff > 0) {
-                    log::info("Compensate gravity. Current z:{}", projRuntime.linearVelocity.z);
+                    log::trace("Compensate gravity. Current z:{}", projRuntime.linearVelocity.z);
                     //projRuntime.linearVelocity.z += fProjGravity * frameDiff;
                     projRuntime.linearVelocity.z = parriedProj.bufSlowVelZ[indexSlowed] * fProjSlowRatio;
                 }
@@ -374,7 +379,7 @@ void ZacOnFrame::CollisionDetection() {
                     //projRuntime.linearVelocity.y /= fProjSlowRatio;
                     parriedProj.bufSlowRestored[indexSlowed] = true;
                     //projRuntime.linearVelocity.z = parriedProj.bufSlowVelZ[indexSlowed];
-                    log::info("Restore speed. Final speed:{}", formatNiPoint3(projRuntime.linearVelocity));
+                    log::trace("Restore speed. Final speed:{}", formatNiPoint3(projRuntime.linearVelocity));
                 }
             }
 
@@ -382,7 +387,7 @@ void ZacOnFrame::CollisionDetection() {
             // See if player successfully parries it
             DistResult shortestDist =
                 weapPosBuf.ShortestDisRecently(iProjCollisionFrame, proj->GetPosition(), velocity);
-            if (shortestDist.dist > fProjCollisionDistThres || (projType == 7 && shortestDist.dist > fProjCollisionDistThres + 10.0f)) {
+            if (shortestDist.dist > fProjCollisionDistThres) {
                 log::debug("Parry projectile no success. Dist:{}", shortestDist.dist);
                 log::debug("Left weapon bot:{}. top:{}",
                            formatNiPoint3(weapPosBuf.bufferL[weapPosBuf.indexCurrentL].bottom),
@@ -411,13 +416,7 @@ void ZacOnFrame::CollisionDetection() {
             if (vecWeapon.Length() > 0.0f) {
                 vecWeapon /= vecWeapon.Length();
                 if (oriVel.Length() > 0.0f) {
-                    if (projType == 7) {
-                        vecWeapon += oriVel / oriVel.Length() / 5;
-                        vecWeapon += RE::NiPoint3(0, 0, 0.3f);
-                    } else {
-                        vecWeapon += oriVel / oriVel.Length() / 2;
-                    }
-                    
+                    vecWeapon += oriVel / oriVel.Length() / 1.5;
                 }
             } else {
                 vecWeapon = RE::NiPoint3(0, 0, 1.0);
@@ -447,6 +446,14 @@ void ZacOnFrame::CollisionDetection() {
                 projRuntime.linearVelocity *= 0.05f;
                 LaunchArrow(proj, playerActor, caster);
             }*/
+
+            // Trying to disable its spell. Disabling weaponSource and ammoSource seems not very useful
+            projRuntime.spell = nullptr;
+            projRuntime.explosion = nullptr;
+            projRuntime.weaponSource = nullptr;
+            projRuntime.ammoSource = nullptr;
+            projRuntime.power = 0.0f;
+            projRuntime.weaponDamage = 0.0f;
                 
             // Slow time
             TimeSlowEffect(playerActor, iTimeSlowFrameProj);
@@ -1512,5 +1519,7 @@ void ZacOnFrame::CleanBeforeLoad() {
     slowTimeData.clear();
     meleeQueue.Clear();
     iFrameCount = 0;
+    iFrameSlowCost = 0;
+    iFrameTriggerPress = 0;
     parriedProj.Clear();
 }

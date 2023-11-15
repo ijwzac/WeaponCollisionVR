@@ -98,6 +98,7 @@ extern int64_t iDelayEnemyHit; // When enemy hit player, delay that event for ho
 extern float fMagicNum1;
 extern float fMagicNum2;
 extern float fMagicNum3;
+extern bool bSwitchHiggsCollision; // Set to false if don't want us to disable/enable higgs' weapon collision
 
 
 
