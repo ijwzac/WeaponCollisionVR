@@ -7,7 +7,7 @@ using namespace SKSE::log;
 bool bEnableWholeMod = true;
 bool bHandToHandLoad = false;
 bool bPlanck = false;
-float fRangeMulti = 1.0f;
+float fRangeMulti = 1.0f;   
 float fCollisionDistThres = 15.0f;
 float fDetectEnemy = 600.f;
 bool bShowPlayerWeaponSegment = false;
@@ -17,24 +17,23 @@ int64_t iFrameTriggerPress = 0;
 int64_t iFrameSlowCost = 0;
 int iTraceLevel = 2;
 bool bPlayerMustBeAttacking = false;
-int64_t iSparkSpawn = 12;
+int64_t iSparkSpawn = 6;
+std::chrono::steady_clock::time_point last_time;
 
 
 // Projectile Parry
 bool bEnableProjParry = true;
-float fProjDetectRange = 800.0f;  // The range of projectile detection
-float fProjCollisionDistThres = 20.0f;         // If weapon and projectile distance is smaller than this number, it's a collision
-float fProjLength = 100.0f;
+float fProjDetectRange = 700.0f;  // The range of projectile detection
+float fProjCollisionDistThres = 12.0f;         // If weapon and projectile distance is smaller than this number, it's a collision
+float fProjLength = 50.0f;
 int64_t iProjCollisionFrame = 5;  // Collision is calculated for player's weapon positions for the last X frames
-float fAutoAimThres = 0.0f;          // TODO: If the cos() of player weapon velocity and enemy position
-                              // is greater than this, aim parried projectile to enemy
 int64_t iTimeSlowFrameProj = 30;
-int64_t iTimeSlowFrameProjAutoAim = 50; // Not used now
-float fProjSlowRatio = 0.15f;
-float fProjSlowRadius = 250.0f;
+float fProjSlowRatio = 0.20f;
+float fProjSlowRadius = 400.0f;
 int64_t iProjSlowFrame = 60;
-float fProjGravity = 100.0f;
 float fProjSlowCost = 10.0f;
+uint32_t iProjSlowButton1 = 33;
+uint32_t iProjSlowButton2 = 33;
 
 // Enemy
 float fEnemyPushVelocityMulti = 8.0f;
@@ -74,6 +73,7 @@ int iHapticStrMin = 10;
 int iHapticStrMax = 50;
 float fHapticMulti = 1.0f;
 int iHapticLengthMicroSec = 100000;  // 100 ms
+bool bSparkForBeast = true; 
 
 // Experience
 float fExpBlock = 3.0f; // At level 20, block needs [86] exp to reach 21. The number 86 increases non-linearly as the skill levels up
@@ -87,9 +87,9 @@ int64_t collisionEffectDurEnemyLong =
     90;  // Within 90 frames, only the first attack from enemy will be nullified
          // Is there any attack animation whose start and hit will be longer than 90 frames?
 int64_t iDelayEnemyHit = 8;
-float fMagicNum1 = 0.0f;
+float fMagicNum1 = -0.3f;
 float fMagicNum2 = 0.0f;
-float fMagicNum3 = 0.0f;
+float fMagicNum3 = -4.3f;
 
 
 Settings* Settings::GetSingleton() {
@@ -157,8 +157,8 @@ void Settings::Difficulty::Load(CSimpleIniA& a_ini) {
 
     detail::get_value(a_ini, fProjCollisionDistThres, section, "ProjectileParryDistance",
         "; To trigger a parry to projectile (spell, arrow), how close weapon and projectile should be.\n"
-        "; Higher value means easier parry. Recommend less than 30.0 for VR players, and 120.0~150.0 for "
-        "SE and AE players. Unit: around 1.4 centimeter. Default:\"20.0\" for VR, \"60.0\" for SE/AE");
+        "; Higher value means easier parry. Recommend less than 20.0 for VR players, and around 80 for "
+        "SE and AE players. Unit: around 1.4 centimeter. Default:\"12.0\" for VR, \"60.0\" for SE/AE");
 
     
     detail::get_value(
@@ -190,8 +190,12 @@ void Settings::Feedback::Load(CSimpleIniA& a_ini) {
     static const char* section = "==========2. Parry Feedback==========";
 
     detail::get_value(a_ini, iSparkSpawn, section, "SpawnSparkFrame",
-                      "; For how many frames after collision do we continue to spawn additional sparks (collision itself spawns 1 spark). \n"
-                      "; Spark is spawned every 6 frames. So a number 12 means spawning 2 sparks after parry. Default:\"12\"");
+        "; For how many frames after collision do we continue to spawn additional sparks (collision itself spawns 1 spark). \n"
+        "; Spark is spawned every 6 frames. So a number 12 means spawning 2 sparks after parry (3 sparks in total). \n"
+        "; If you use vanilla spark, 12 is probably good. If you use mods offering big, bright spark, change this to 6 or even 0. Default:\"6\"");
+
+    detail::get_value(a_ini, bSparkForBeast, section, "SparkForBeast",
+        "; If this is false, there won't be spark if player is beast (like werewolf) or enemy is beast. Default:\"true\"");
 
     detail::get_value(
         a_ini, fHapticMulti, section, "HapticStrengthMultiplier",
@@ -232,7 +236,7 @@ void Settings::EffectOnEnemy::Load(CSimpleIniA& a_ini) {
 
     detail::get_value(
         a_ini, fEnemyPushVelocityMulti, section, "EnemyPushSpeedMulti",
-        ";======[2.1] Hit effects on enemy\n"
+        ";======[3.1] Hit effects on enemy\n"
         ";\n"
         "; After a parry, this value controls how fast the enemy should be pushed away. This creates a little juice as parry feedback\n"
         "; Higher value means pushing faster farther. A value below 8.0 is often effectless. Default:\"8.0\"");
@@ -255,7 +259,7 @@ void Settings::EffectOnEnemy::Load(CSimpleIniA& a_ini) {
         "; Higher value means easier ragdoll. \"0.25\" means below 25% of Health. Default:\"0.25\" for VR");
 
     detail::get_value(a_ini, fEnemyStopVelocityThres, section, "EnemyStopVelocityThreshold",
-        ";======[2.2] Enemy stagger based on player weapon speed (recommended to VR)\n"
+        ";======[3.2] Enemy stagger based on player weapon speed (recommended to VR)\n"
         ";\n"
         "; When player's weapon speed is above this, enemy will stop the current attack (but they can start a new attack immediately).\n"
         "; \"40.0\" is a really easy-to-reach threshold, like swinging your controller gently. \n"
@@ -266,7 +270,7 @@ void Settings::EffectOnEnemy::Load(CSimpleIniA& a_ini) {
         "; Unit:~ 1.5 cm per second. Default:\"9999.0\" (stagger is not based on speed) for AE and SE player, \"130.0\" for VR player.");
 
     detail::get_value(a_ini, fEnemyStaStopThresPer, section, "EnemyStopStaminaThreshold",
-        ";======[2.3] Enemy stagger based on stamina (recommended to SE/AE)\n"
+        ";======[3.3] Enemy stagger based on stamina (recommended to SE/AE)\n"
         ";\n"
         "; When enemy's stamina is below this ratio, they will stop their attack (but they can start a new attack immediately). Set this to "
         "\"1.0\" to always stop them\n"
@@ -283,7 +287,7 @@ void Settings::EffectOnEnemy::Load(CSimpleIniA& a_ini) {
     
     detail::get_value(
         a_ini, fEnemyStaCostWeapMulti, section, "EnemyStaminaCostMultiplier",
-        ";======[2.4] Stamina cost to enemy\n"
+        ";======[3.4] Stamina cost to enemy\n"
         ";\n"
         "; Stamina_cost_to_enemy = EnemyStaminaCostMultiplier * (player_weapon_damage * "
         "player_related_skill *  2.0 - enemy_weapon_damage * enemy_related_skill)\n"
@@ -311,7 +315,7 @@ void Settings::EffectOnPlayer::Load(CSimpleIniA& a_ini) {
         "; If this is true, when player wields two unarmed hands, they must wear heavy armor to be able to parry. Default:\"false\"");
 
     detail::get_value(a_ini, fPlayerPushVelocityMulti, section, "PlayerPushSpeedMulti",
-        ";======[3.1] Hit effect on player\n"
+        ";======[4.1] Hit effect on player\n"
         ";\n"
         "; After a parry, this value controls how fast the player should be pushed away. This creates a "
         "little juice as parry feedback\n"
@@ -324,7 +328,7 @@ void Settings::EffectOnPlayer::Load(CSimpleIniA& a_ini) {
 
     detail::get_value(
         a_ini, fPlayerStaCostWeapMulti, section, "PlayerStaminaCostMultiplier",
-        ";======[3.2] Stamina cost to player\n"
+        ";======[4.2] Stamina cost to player\n"
         ";\n"
         "; Stamina_cost_to_player = PlayerStaminaCostMultiplier * (enemy_weapon_damage * "
         "enemy_related_skill * 2.0 - player_weapon_damage * player_related_skill)\n"
@@ -344,7 +348,7 @@ void Settings::EffectOnPlayer::Load(CSimpleIniA& a_ini) {
 
     detail::get_value(
         a_ini, fPlayerWeaponSpeedRewardThres, section, "PlayerWeaponSpeedRewardThreshold1",
-        ";======[3.3] Weapon speed reward VR\n"
+        ";======[4.3] Weapon speed reward VR\n"
         ";\n"
         "; === If you are a SE/AE player, no need to read the four settings below.\n"
         "; Because SE/AE don't have controller, so stamina cost is already reduced for SE/AE players, and settings below are turned off\n"
@@ -392,12 +396,13 @@ void Settings::Projectile::Load(CSimpleIniA& a_ini) {
 
     
     detail::get_value(a_ini, fProjLength, section, "ProjectileLength",
-        "; The length of each projectile. Higher value means easier parry. Default:\"100.0\"");
+        "; The length of each projectile. Higher value means easier parry. Default:\"50.0\"");
 
     detail::get_value(a_ini, iProjCollisionFrame, section, "ProjectileParryFrame",
         "; When calculating the parry of projectile, this mod also considers player's weapon position in "
         "the last ProjectileParryFrame frames.\n"
-        "; Higher value means easier parry, but don't make it too large. Default:\"5\"");
+        "; This enables you to parry like how Jedi deflects blaster shots by swinging lightsaber. \n"
+        "; Higher value means easier parry, but don't make it too high. Default:\"5\"");
 
     detail::get_value(a_ini, fProjSlowRadius, section, "ProjectileSlowRadius",
         "; You can SLOW DOWN projectiles like Neo in The Matrix using your magicka!!!"
@@ -406,7 +411,20 @@ void Settings::Projectile::Load(CSimpleIniA& a_ini) {
         "; (2) Player is pressing the trigger on VR controller\n"
         "; \n"
         "; \n"
-        "; This is the radius of the slow down effect. Higher value means earlier slow down. Default:\"250.0\"");
+        "; This is the radius of the slow down effect. Don't recommend too large or too small values. Default:\"250.0\"");
+
+    detail::get_value(a_ini, iProjSlowButton1, section, "ProjectileSlowButton1",
+        "; The code of the button you need to press to slow projectiles. For VR, 33 is the trigger button. \n"
+        "; For SE/AE, 4096 is A on Xbox controller, and 18 is E on keyboard. \n"
+        "; If those values don't work for you, you can find the code of the button you want by these steps:\n"
+        "; (1) Set TraceLevel to 0; (2) Open the trace file (location is in TraceLevel section) when you play\n"
+        "; (3) Hold the button you want during combat; (4) In the trace file, you will see a lot of \"... Pressed key XXX\"\n"
+        "; (5) Come back here, set ProjectileSlowButton to the XXX you see, save edits"
+        "; Default:\"33\" for VR, \"18\" for SE/AE");
+
+    detail::get_value(
+        a_ini, iProjSlowButton2, section, "ProjectileSlowButton2",
+        "; Another button you can press to slow projectiles.  Default:\"33\" for VR, \"4096\" for SE/AE");
 
     detail::get_value(a_ini, fProjSlowCost, section, "ProjectileSlowMagickaCost",
         "; The magicka cost to slow down the projectile.\n"
@@ -414,7 +432,7 @@ void Settings::Projectile::Load(CSimpleIniA& a_ini) {
 
     detail::get_value(a_ini, fProjSlowRatio, section, "ProjectileSlowRatio",
         "; When slowed down, projectile_new_speed = projectile_original_speed * ProjectileSlowRatio.\n"
-        "; Lower value means slower speed. Default:\"0.15\"");
+        "; Lower value means slower speed. Default:\"0.17\"");
 
     detail::get_value(a_ini, iProjSlowFrame, section, "ProjectileSlowFrame",
         "; How many frames will the projectile be slowed.\n"
@@ -451,12 +469,10 @@ void Settings::Technique::Load(CSimpleIniA& a_ini) {
     //    a_ini, fMagicNum1, section, "DebugTuneAngle1",
     //    "; ===No need to read this option\n"
     //    "; A number I use to debug weapon angle of special enemies who don't have hands. Default:\"0.0\"");
-
     //detail::get_value(
     //    a_ini, fMagicNum2, section, "DebugTuneAngle2",
     //    "; ===No need to read this option\n"
     //    "; A number I use to debug weapon angle of special enemies who don't have hands. Default:\"0.0\"");
-
     //detail::get_value(
     //    a_ini, fMagicNum3, section, "DebugTuneAngle3",
     //    "; ===No need to read this option\n"
@@ -477,10 +493,10 @@ void Settings::Technique::Load(CSimpleIniA& a_ini) {
         "; After a collision, within how many frames should we nullify the first melee hit from this enemy.\n"
         "; Default:\"90\"");
 
-    detail::get_value(
-        a_ini, fProjGravity, section, "ProjectileGravity",
-        "; When projectile is slowed, this is used to compensate gravity so it doesn't drop rapidly.\n"
-        "; Default:\"10\"");
+    //detail::get_value(
+    //    a_ini, fProjGravity, section, "ProjectileGravity",
+    //    "; When projectile is slowed, this is used to compensate gravity so it doesn't drop rapidly.\n"
+    //    "; Default:\"10\"");
 
     // Deprecated: no longer used
     //detail::get_value(a_ini, bSwitchHiggsCollision, section, "SwitchHiggsWeaponCollision",

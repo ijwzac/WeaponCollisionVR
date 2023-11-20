@@ -9,6 +9,7 @@ extern int64_t iFrameTriggerPress;
 extern bool bHandToHandLoad;
 extern bool bPlanck;
 extern int64_t iFrameSlowCost;
+extern std::chrono::steady_clock::time_point last_time;
 
 // Parry difficulty
 extern float fRangeMulti;          // controls the effective length of weapon in this mod
@@ -21,15 +22,13 @@ extern float fProjDetectRange; // The range of projectile detection
 extern float fProjLength; // The segment of projectile is from its position to a point ahead of it, calculated using its velocity
 extern float fProjCollisionDistThres; // If weapon and projectile distance is smaller than this number, it's a collision
 extern int64_t iProjCollisionFrame; // Collision is calculated for player's weapon positions for the last X frames
-extern float fAutoAimThres;         // If the cos() of player weapon velocity and enemy position 
-                                    // is greater than this, aim parried projectile to enemy
 extern int64_t iTimeSlowFrameProj;
-extern int64_t iTimeSlowFrameProjAutoAim;
 extern float fProjSlowRatio; // The ratio to slow down projectile, when it comes close to player
 extern float fProjSlowRadius; // When a projectile enters this radius of player, it will be slowed down
 extern int64_t iProjSlowFrame; // How many frames will the projectile be slowed
-extern float fProjGravity; // A fixed number that is used to compensate gravity during slow
 extern float fProjSlowCost; // Magicka cost to slow projectile
+extern uint32_t iProjSlowButton1; // 33 is vr trigger. 4096 is xbox controller A. 18 is keyboard E
+extern uint32_t iProjSlowButton2;
 
 // Parry effect on enemy
 extern float fEnemyPushVelocityMulti;  // the speed multiplier that the enemy will be pushed
@@ -64,6 +63,7 @@ extern float fPlayerStaUnableParryThresPer;         // when player stamina below
 extern float fPlayerStaStopThresPer;         // when player stamina below this percent, they stop current attack
 extern float fPlayerStaLargeRecoilThresPer;  // when player stamina below this percent, they stop and have large recoil
 extern int64_t iSparkSpawn; // number of frames that we spawn spark on weapons.
+extern bool bSparkForBeast; 
 extern float fTimeSlowRatio; // 0.1 means time flows at 10% of normal time
 extern int64_t iTimeSlowFrameNormal; // for how many frames will time be slow
 extern int64_t iTimeSlowFrameStop;
@@ -263,8 +263,8 @@ public:
         if (event->GetEventType() == RE::INPUT_EVENT_TYPE::kButton) {
             auto* buttonEvent = event->AsButtonEvent();
             auto dxScanCode = buttonEvent->GetIDCode();
-            //logger::info("Pressed key {}", dxScanCode);
-            if (dxScanCode == 33) {// 33 is trigger
+            logger::trace("Pressed key {}", dxScanCode);
+            if (dxScanCode == iProjSlowButton1 || dxScanCode == iProjSlowButton2) {  // 33 is trigger
                 iFrameTriggerPress = iFrameCount;
             }
         }

@@ -222,13 +222,51 @@ RE::NiMatrix3 ConvertToWorldSpace(const RE::NiMatrix3& R_weapon_player_space,
     }
     return R_weapon_world_space;
 }
+
+
+RE::NiMatrix3 adjustNodeRotation(RE::NiNode* baseNode, RE::NiMatrix3& rotation, RE::NiPoint3 adjust, bool useAdjust2) {
+    RE::NiMatrix3 newRotation = rotation;
+    if (baseNode) {
+        auto rotation_base = baseNode->world.rotate;
+        newRotation = ConvertToPlayerSpace(rotation, rotation_base);
+
+        if (useAdjust2) {
+            RE::NiMatrix3 adjust2;
+            // Set up a 90-degree rotation matrix around Z-axis
+            adjust2.entry[0][0] = 0.0f;
+            adjust2.entry[0][1] = 0.0f;
+            adjust2.entry[0][2] = 1.0f;
+            adjust2.entry[1][0] = 0.0f;
+            adjust2.entry[1][1] = 1.0f;
+            adjust2.entry[1][2] = 0.0f;
+            adjust2.entry[2][0] = -1.0f;
+            adjust2.entry[2][1] = 0.0f;
+            adjust2.entry[2][2] = 0.0f;
+
+            newRotation = newRotation * adjust2;
+        } else {
+            newRotation = newRotation * RE::NiMatrix3(adjust.x, adjust.y, adjust.z);
+        }
+
+
+        newRotation = ConvertToWorldSpace(newRotation, rotation_base);
+    } else {
+        log::warn("Base node is null");
+    }
+    return newRotation;
+}
+
 uint32_t GetBaseFormID(uint32_t formId) { return formId & 0x00FFFFFF; }
 
 uint32_t GetFullFormID(const uint8_t modIndex, uint32_t formLower) { return (modIndex << 24) | formLower; }
 
+uint32_t GetFullFormID_ESL(const uint8_t modIndex, const uint16_t esl_index, uint32_t formLower) {
+    return (modIndex << 24) | (esl_index << 12) | formLower;
+}
+
 // The time slow spell is given by SpeelWheel VR by Shizof. Thanks for the support!
 // May return nullptr
-RE::SpellItem* GetTimeSlowSpell() { 
+RE::SpellItem* GetTimeSlowSpell_SpeelWheel() { 
     auto handler = RE::TESDataHandler::GetSingleton();
     if (!handler) {
         log::error("GetTimeSlowSpell: failed to get TESDataHandler");
@@ -265,6 +303,37 @@ RE::SpellItem* GetTimeSlowSpell() {
     return timeSlowSpell;
 }
 
+RE::SpellItem* GetTimeSlowSpell_Mine() {
+
+    RE::FormID partFormID = 0x000D63; // D63 is spell, D62 is effect
+    RE::SpellItem* timeSlowSpell;
+    //RE::FormID fullFormID = GetFullFormID(weaponCollisionIndex.value(), partFormID);
+    for (uint16_t i = 0; i <= 0xFFF; i++) {
+        RE::FormID fullFormID = GetFullFormID_ESL(0xFE, i, partFormID);
+        timeSlowSpell = RE::TESForm::LookupByID<RE::SpellItem>(fullFormID);
+        if (timeSlowSpell) break;
+    } 
+    
+    
+    if (!timeSlowSpell) {
+        log::error("GetTimeSlowSpell: failed to get timeslow spell");
+        return nullptr;
+    }
+    return timeSlowSpell;
+}
+
+float generateRandomFloat(float min, float max) {
+    // Create a random device and use it to seed the Mersenne Twister engine
+    std::random_device rd;
+    std::mt19937 gen(rd());
+
+    // Define the distribution, range is min to max
+    std::uniform_real_distribution<float> dis(min, max);
+
+    // Generate and return the random number
+    return dis(gen);
+}
+
 RE::NiNode* HandleDwenmerSphere(RE::Actor* actor, RE::NiPoint3& posWeaponBottomL, RE::NiPoint3& posWeaponBottomR,
                          RE::NiPoint3& posWeaponTopL, RE::NiPoint3& posWeaponTopR) {
     if (actor->GetRace() && actor->GetRace()->formID == DwenmerSphereForm) {
@@ -291,15 +360,11 @@ RE::NiNode* HandleDwenmerSphere(RE::Actor* actor, RE::NiPoint3& posWeaponBottomL
         handleR *= fRangeMulti;
         posWeaponBottomR = weaponDSS->world.translate;
 
-        float x, y, z;
         auto rotation = weaponDSS->world.rotate;
-        auto rotation_base = baseDS->world.rotate;
-        rotation = ConvertToPlayerSpace(rotation, rotation_base);
 
-        RE::NiPoint3 adjust = RE::NiPoint3(-0.3f, 0.0f, -4.3f);  // -0.3f, 0.0f, -4.3f. A rotation matrix I tested
-        rotation = rotation * adjust;
-
-        rotation = ConvertToWorldSpace(rotation, rotation_base);
+        // -0.3f, 0.0f, -4.3f below are tested to be working only for dwenmer sphere's blade
+        //rotation = adjustNodeRotation(baseDS, rotation, RE::NiPoint3(-0.3f, 0.0f, -4.3f), false); 
+        rotation = adjustNodeRotation(baseDS, rotation, RE::NiPoint3(-0.3f, 0.0f, -4.3f), false); 
 
         auto weaponDirectionR = RE::NiPoint3{rotation.entry[0][1], rotation.entry[1][1], rotation.entry[2][1]};
 
@@ -361,6 +426,7 @@ RE::NiNode* HandleMouthRace(RE::Actor* actor, RE::NiPoint3& posWeaponBottomL, RE
     }
 }
 
+
 twoNodes HandleClawRaces(RE::Actor* actor, RE::NiPoint3& posWeaponBottomL, RE::NiPoint3& posWeaponBottomR,
                        RE::NiPoint3& posWeaponTopL, RE::NiPoint3& posWeaponTopR) {
 
@@ -397,29 +463,35 @@ twoNodes HandleClawRaces(RE::Actor* actor, RE::NiPoint3& posWeaponBottomL, RE::N
     if (!weaponNodeL) weaponNodeL = netimmerse_cast<RE::NiNode*>(actorRoot->GetObjectByName(weaponNodeNameL_Alt2));
     if (!weaponNodeR) weaponNodeR = netimmerse_cast<RE::NiNode*>(actorRoot->GetObjectByName(weaponNodeNameR_Alt2));
 
-
+    
+    const auto nodeBaseStr = "NPC Pelvis [Pelv]"sv;  // base of at least werewolves
+    const auto baseNode = netimmerse_cast<RE::NiNode*>(actorRoot->GetObjectByName(nodeBaseStr));
 
     if (weaponNodeL && weaponNodeR) { 
         isRace = true;
 
-        float reachR(10.0f), handleR(10.0f);
+        float reachR(5.0f), handleR(34.0f); // our rotation matrix kinda inverts the rotation
         reachR *= fRangeMulti;
         handleR *= fRangeMulti;
         posWeaponBottomR = weaponNodeR->world.translate;
 
         auto rotationR = weaponNodeR->world.rotate;
 
+        // Adjust right claw rotation. Original rotation is like the claw is holding a dagger, but we want it sticking out
+        rotationR = adjustNodeRotation(baseNode, rotationR, RE::NiPoint3(1.5f, 0.0f, 0.0f), false);
+
         auto weaponDirectionR = RE::NiPoint3{rotationR.entry[0][1], rotationR.entry[1][1], rotationR.entry[2][1]};
 
         posWeaponTopR = posWeaponBottomR + weaponDirectionR * reachR;
         posWeaponBottomR = posWeaponBottomR - weaponDirectionR * handleR;
 
-        float reachL(10.0f), handleL(10.0f);
+        float reachL(5.0f), handleL(34.0f);
         reachL *= fRangeMulti;
         handleL *= fRangeMulti;
         posWeaponBottomL = weaponNodeL->world.translate;
 
         auto rotationL = weaponNodeL->world.rotate;
+        rotationL = adjustNodeRotation(baseNode, rotationL, RE::NiPoint3(1.5f, 0.0f, 0.0f), false);
 
         auto weaponDirectionL = RE::NiPoint3{rotationL.entry[0][1], rotationL.entry[1][1], rotationL.entry[2][1]};
 
@@ -454,7 +526,7 @@ twoNodes HandleClawAndHeadRaces(RE::Actor* actor, RE::NiPoint3& posWeaponBottomL
     }
 
     // we just calculate the right hand and head
-    const auto weaponNodeNameL = "Sabrecat_RightHand[RHnd]"sv;   // for cat
+    const auto weaponNodeNameL = "Sabrecat_RightFinger2[RF21]"sv;   // for cat
     const auto weaponNodeNameR = "Sabrecat_Head[LM01]"sv;
     auto weaponNodeL = netimmerse_cast<RE::NiNode*>(actorRoot->GetObjectByName(weaponNodeNameL));
     auto weaponNodeR = netimmerse_cast<RE::NiNode*>(actorRoot->GetObjectByName(weaponNodeNameR));

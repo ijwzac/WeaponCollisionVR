@@ -15,6 +15,8 @@
 using namespace SKSE;
 using namespace SKSE::log;
 
+extern bool bDisableSpark;
+
 namespace ZacOnFrame {
 
     void InstallFrameHook();
@@ -116,6 +118,7 @@ namespace ZacOnFrame {
 
         // For several frames, continue to spawn sparks on enemy's weapon
         void SpawnSpark() {
+            if (bDisableSpark) return;
             if (iFrameCollision == -1 || !enemy) return;
             if (iFrameCount - iFrameCollision < iSparkSpawn && iFrameCount % 6 == 0) {
                 if (GetSpecialRace(enemy) != 0) return;
@@ -292,6 +295,7 @@ namespace ZacOnFrame {
 
         // For several frames, continue to spawn sparks on player's weapon
         void SpawnSpark() {
+            if (bDisableSpark) return;
             if (!playerAct || frameLastCollision == 0) return;
             if (iFrameCount - frameLastCollision < iSparkSpawn && iFrameCount % 6 == 0) {
                 const auto nodeName = isLeft ? "SHIELD"sv : "WEAPON"sv;
@@ -411,11 +415,13 @@ namespace ZacOnFrame {
         }
 
         // The shortest distance between player's weapon and the given projectile, in the last N frames
-        DistResult ShortestDisRecently(std::size_t N, RE::NiPoint3 posProj, RE::NiPoint3 velocity) {
+        DistResult ShortestDisRecently(std::size_t N, RE::NiPoint3 posProj, RE::NiPoint3 velocity, bool isSlowed) {
             float shortestDist = 9999.0f;
             DistResult shortestResult = DistResult();
-            RE::NiPoint3 posProjFakeEnd = posProj + velocity / velocity.Length() * fProjLength / 2; 
-            posProj = posProj - velocity / velocity.Length() * fProjLength / 2; 
+            float extraLength = 0.0f;
+            if (!isSlowed) extraLength = 30.0f;
+            RE::NiPoint3 posProjFakeHead = posProj + velocity / velocity.Length() * (fProjLength / 2 + extraLength); 
+            posProj = posProj - velocity / velocity.Length() * (fProjLength / 2 + extraLength); 
             if (N == 0 || N > capacity) {
                 // Return zero velocity or handle error
                 return DistResult();
@@ -428,7 +434,7 @@ namespace ZacOnFrame {
                     std::size_t frame = (currentIdx - 1 - frameCount + capacity) % capacity;
                     RE::NiPoint3 posBottom = buffer[frame].bottom;
                     RE::NiPoint3 posTop = buffer[frame].top;
-                    auto distResult = OnMeleeHit::Dist(posBottom, posTop, posProj, posProjFakeEnd);
+                    auto distResult = OnMeleeHit::Dist(posBottom, posTop, posProj, posProjFakeHead);
                     if (distResult.dist < shortestDist) {
                         shortestDist = distResult.dist;
                         distResult.proj_isLeft = isLeft;

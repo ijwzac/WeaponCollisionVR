@@ -88,6 +88,7 @@ namespace {
             } break;
             case SKSE::MessagingInterface::kDataLoaded: {
                 log::info("kDataLoaded"); 
+                last_time = std::chrono::high_resolution_clock::now();
                 auto parryrpgHandle = GetModuleHandleA("ParryingRPG.dll");
                 if (parryrpgHandle) {
                     logger::error("Warning! Pseudo Physical Weapon Collision and Parry has detected that ParryingRPG.dll is also loaded!");

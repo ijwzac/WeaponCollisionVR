@@ -28,7 +28,8 @@ long long highest_run_time = 0;
 long long total_run_time = 0;
 long long run_time_count = 1;
 
-
+int64_t count_after_pause;
+bool bDisableSpark = false;
 
 // I am trying a not very normal approach here: fire the original event first
 void ZacOnFrame::OnFrameUpdate() {
@@ -42,8 +43,21 @@ void ZacOnFrame::OnFrameUpdate() {
     bool isPaused = true;
     if (bEnableWholeMod) {
         if (const auto ui{RE::UI::GetSingleton()}) {
-            if (!ui->GameIsPaused()) {  // Not in menu, not in load, not in console
+            // Check if it has been a while since the last_time, and if so, don't do anything for a few seconds
+            // This can disable our mod after loading screen, to avoid bugs
+            auto dur_last = std::chrono::duration_cast<std::chrono::microseconds>(now - last_time);
+            last_time = now;
+            if (dur_last.count() > 1000 * 1000) { // 1 second
+                count_after_pause = 180;
+                CleanBeforeLoad();
+                log::info("Detected long period since last frame. Player is probably loading. Clean and pause our functions for 3 seconds");
+            }
+            if (count_after_pause > 0) count_after_pause--;
+
+            if (!ui->GameIsPaused() && count_after_pause <= 0) {  // Not in menu, not in console, but can't detect in load
+
                 ZacOnFrame::CollisionDetection();
+
                 iFrameCount++;
                 isPaused = false;
             }
@@ -138,6 +152,8 @@ void ZacOnFrame::CollisionDetection() {
     }
     
     // Get player's weapons
+    bool isPlayerUsingClaw = false;
+    if (GetSpecialRace(playerActor) == 3) isPlayerUsingClaw = true;
     RE::NiPoint3 posWeaponBottomL, posWeaponBottomR, posWeaponTopL, posWeaponTopR;
     if (!FrameGetWeaponPos(playerActor, posWeaponBottomL, posWeaponBottomR, posWeaponTopL, posWeaponTopR, true)) {
         log::warn("Fail to get player's weapon pos");
@@ -165,6 +181,7 @@ void ZacOnFrame::CollisionDetection() {
 
     // If bPlayerMustBeAttacking is true, which is default true for SE/AE, and default false for VR
     // Then we return here, because player must be attacking to parry
+    bool bAbleToParry = true;
     if (bPlayerMustBeAttacking) {
         if (!playerActor->AsActorState()) {
             log::warn("Fail to get ActorState for player");
@@ -172,7 +189,7 @@ void ZacOnFrame::CollisionDetection() {
         }
         if (!OnMeleeHit::IsAttacking(playerActor->AsActorState()->GetAttackState())) {
             log::trace("Player not attacking");
-            return;
+            bAbleToParry = false;
         }
     }
 
@@ -234,258 +251,265 @@ void ZacOnFrame::CollisionDetection() {
                 return RE::BSContainer::ForEachResult::kContinue;
                 
             }
-            
-                
-            RE::Projectile::PROJECTILE_RUNTIME_DATA& projRuntime = proj->GetProjectileRuntimeData();
-            RE::ObjectRefHandle casterHandle = projRuntime.shooter;
-            RE::NiPoint3 velocity = projRuntime.linearVelocity;
 
-
-            // Check if the velocity is too low
-            if (velocity.Length() < 100.0f) {
-                log::debug("Too slow Asprojectile. Name:{}. Speed:{}. Pos:{},{},{}",
-                           proj->GetName(), velocity.Length(), proj->GetPositionX(),
-                           proj->GetPositionY(), proj->GetPositionZ());
-                return RE::BSContainer::ForEachResult::kContinue;
-            }
-
-            // Check if the projectile already triggered impact
-            int countImpact = 0;
-            for (auto impactIter = projRuntime.impacts.begin(); impactIter != projRuntime.impacts.end();
-                    ++impactIter) {
-                countImpact++;
-                auto impact = *impactIter;
-                if (impact) {
-                    log::trace("Impact result:{}", static_cast<int>(impact->impactResult));
-                } else {
-                    log::trace("Impact is nullptr");
-                }
-            }
-            if (countImpact > 0) {
-                log::trace("Impact count:{}. Return", countImpact);
-                return RE::BSContainer::ForEachResult::kContinue;
-            }
-
-            // Check if it has caster and caster is not player
-            auto caster = casterHandle.get().get();
-            if (!caster || caster == playerActor) { 
-                log::trace( "Asprojectile without caster or caster is player. Name:{}. Pos:{},{},{}",
-                    proj->GetName(), proj->GetPositionX(), proj->GetPositionY(), proj->GetPositionZ());
-                return RE::BSContainer::ForEachResult::kContinue;
-            }
-
-            // Check if it has already been parried
-            if (parriedProj.IsParried(proj)) {
-                log::trace("Found parried Asprojectile. Shooter:{}. Name:{}. Speed:{}. Pos:{},{},{}",
-                            caster->GetDisplayFullName(), proj->GetName(), velocity.Length(),
-                            proj->GetPositionX(), proj->GetPositionY(), proj->GetPositionZ());
-                return RE::BSContainer::ForEachResult::kContinue;
-            }
-
-            log::trace("Found Asprojectile. Name:{}. Speed:{}. Pos:{},{},{}", proj->GetName(), velocity.Length(),
-                        proj->GetPositionX(),
-                        proj->GetPositionY(), proj->GetPositionZ());
-
-            
-
-            // Option 1:
-            //// Slow the projectile down, just for once, if player's weapon speed is high enough
-            //auto distProjPlayer = proj->GetPosition().GetDistance(playerActor->GetPosition());
-            //if (parriedProj.IsSlowed(proj) == false && distProjPlayer < fProjSlowRadius &&
-            //    (leftSpeed.SqrLength() > fPlayerWeaponSpeedRewardThres2 ||
-            //     rightSpeed.SqrLength() > fPlayerWeaponSpeedRewardThres2)) {
-            //    // TODO: delete unnecessary angle, velocity, 
-            //    log::debug("About to slow a projectile. Dist: {}", distProjPlayer);
-            //    parriedProj.PushSlowed(proj, projRuntime.linearVelocity, proj->GetAngle());
-            //    projRuntime.linearVelocity *= fProjSlowRatio;
-            //}
-
-            // Option 2:
-            // When the player is pressing the trigger, enters slow motion if the projectile is close enough once
-            // However, this alone is not good, because slow motion takes effect a few frames later, not immediately
-
-            // Option 3:
-            // When the player is pressing the trigger, slow the projectile down
-            auto inputManager = RE::BSInputDeviceManager::GetSingleton();
-            auto distProjPlayer = proj->GetPosition().GetDistance(playerActor->GetPosition());
-            if (parriedProj.IsSlowed(proj) == 99999 && distProjPlayer < fProjSlowRadius && inputManager) { // 99999 means not slowed
-                //auto vrControllerL = inputManager->GetVRControllerLeft(); 
-                //auto vrControllerR = inputManager->GetVRControllerRight();
-                //auto keyboard = inputManager->GetKeyboard();
-                //auto mouse = inputManager->GetMouse();
-                //auto virtualKeyboard = inputManager->GetVirtualKeyboard();
-                //auto Gamepad = inputManager->GetGamepad();
-                //auto GamepadHandler = inputManager->GetGamepadHandler();
-                //// All of them below are not null. However, the map size of controllers and virtualKeyboard are 0
-                //// Also, even if Gamepad is not null, Gamepad->IsEnabled() can crash the program
-                //// The map size of mouse and keboard is very large, but accessing them crashes the program
-                //if (vrControllerL)
-                //    log::info("vrControllerL not null. Enabled:{}. butNameMapSize:{}. deviceButMapSize:{}", vrControllerL->IsEnabled(),
-                //              vrControllerL->buttonNameIDMap.size(), vrControllerL->deviceButtons.size());
-                //if (vrControllerR)
-                //    log::info("vrControllerR not null. Enabled:{}. butNameMapSize:{}. deviceButMapSize:{}", vrControllerR->IsEnabled(),
-                //              vrControllerR->buttonNameIDMap.size(), vrControllerR->deviceButtons.size());
-                //if (keyboard)
-                //    log::info("keyboard not null. Enabled:{}. butNameMapSize:{}. deviceButMapSize:{}", keyboard->IsEnabled(),
-                //              keyboard->buttonNameIDMap.size(), keyboard->deviceButtons.size());
-                //if (mouse)
-                //    log::info("mouse not null. Enabled:{}. butNameMapSize:{}. deviceButMapSize:{}", mouse->IsEnabled(),
-                //              mouse->buttonNameIDMap.size(), mouse->deviceButtons.size());
-                //if (virtualKeyboard)
-                //    log::info("virtualKeyboard not null. Enabled:{}. butNameMapSize:{}. deviceButMapSize:{}", virtualKeyboard->IsEnabled(),
-                //              virtualKeyboard->buttonNameIDMap.size(), virtualKeyboard->deviceButtons.size());
-
-                if (iFrameCount - iFrameTriggerPress < 3 && iFrameCount - iFrameTriggerPress >= 0) {
-                    bool byPassMagCheck = false || (fProjSlowCost == 0);
-                    if (iFrameCount - iFrameSlowCost < 90 && iFrameCount - iFrameSlowCost >= 0) {
-                        byPassMagCheck = true;
-                    }
-                    // Check player magicka
-                    auto curMag = playerActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kMagicka);
-                    if (curMag >= fProjSlowCost || byPassMagCheck) {
-                        if (!byPassMagCheck) {
-                            playerActor->AsActorValueOwner()->RestoreActorValue(
-                                RE::ACTOR_VALUE_MODIFIER::kDamage, RE::ActorValue::kMagicka, -fProjSlowCost);
-                            iFrameSlowCost = iFrameCount;
-                        }
-                        float oriZ = projRuntime.linearVelocity.z;
-                        projRuntime.linearVelocity *= fProjSlowRatio;
-                        /*projRuntime.linearVelocity.y *= fProjSlowRatio;
-                        projRuntime.linearVelocity.z *= fProjSlowRatio;*/
-                        log::debug("Trigger pressed. Magicka before cost:{}. Speed after slow down:{}", curMag,
-                                   formatNiPoint3(projRuntime.linearVelocity));
-                        parriedProj.PushSlowed(proj, oriZ);
-
-                    } else {
-                        log::debug("Trigger pressed. Magicka not enough:{}", curMag);
-                    }
-                   
-                }
-            }
-
-            if (auto indexSlowed = parriedProj.IsSlowed(proj); indexSlowed != 99999) {
-                // If the slow is still effective, compensate the gravity
-                auto frameDiff = iFrameCount - parriedProj.bufferFrameSlow[indexSlowed];
-                log::trace("Frame diff:{}. iProjSlowFrame:{}", frameDiff, iProjSlowFrame);
-                if (frameDiff < iProjSlowFrame && frameDiff > 0) {
-                    log::trace("Compensate gravity. Current z:{}", projRuntime.linearVelocity.z);
-                    //projRuntime.linearVelocity.z += fProjGravity * frameDiff;
-                    projRuntime.linearVelocity.z = parriedProj.bufSlowVelZ[indexSlowed] * fProjSlowRatio;
-                }
-
-                // If the slow should expire, restore the velocity
-                if (frameDiff >= iProjSlowFrame && parriedProj.bufSlowRestored[indexSlowed] == false) {
-                    projRuntime.linearVelocity /= fProjSlowRatio;
-                    //projRuntime.linearVelocity.y /= fProjSlowRatio;
-                    parriedProj.bufSlowRestored[indexSlowed] = true;
-                    //projRuntime.linearVelocity.z = parriedProj.bufSlowVelZ[indexSlowed];
-                    log::trace("Restore speed. Final speed:{}", formatNiPoint3(projRuntime.linearVelocity));
-                }
-            }
-
-
-            // See if player successfully parries it
-            DistResult shortestDist =
-                weapPosBuf.ShortestDisRecently(iProjCollisionFrame, proj->GetPosition(), velocity);
-            if (shortestDist.dist > fProjCollisionDistThres) {
-                log::debug("Parry projectile no success. Dist:{}", shortestDist.dist);
-                log::debug("Left weapon bot:{}. top:{}",
-                           formatNiPoint3(weapPosBuf.bufferL[weapPosBuf.indexCurrentL].bottom),
-                           formatNiPoint3(weapPosBuf.bufferL[weapPosBuf.indexCurrentL].top));
-                log::debug("Right weapon bot:{}. top:{}",
-                           formatNiPoint3(weapPosBuf.bufferR[weapPosBuf.indexCurrentR].bottom),
-                           formatNiPoint3(weapPosBuf.bufferR[weapPosBuf.indexCurrentR].top));
-                return RE::BSContainer::ForEachResult::kContinue;
-            }
-
-            // Mark as parried, to avoid being parried multiple times
-            parriedProj.PushParried(proj);
-
-            auto oriVel = projRuntime.linearVelocity;
-            log::trace("Parried projectile! Ori Velocity:{},{},{}", oriVel.x, oriVel.y, oriVel.z);
-                    
-
-            //// Option 1: Set the projectile to fly to its caster
-            //RE::NiPoint3 vecToCaster = caster->GetPosition() + RE::NiPoint3(0, 0, 50.0f) - proj->GetPosition();
-            //if (vecToCaster.Length() > 0.0f) vecToCaster /= vecToCaster.Length();
-            //vecToCaster *= oriVel.Length();
-            //projRuntime.linearVelocity = vecToCaster; 
-
-            // Option 2: Set the projectile to fly to player's weapon direction
-            RE::NiPoint3 vecWeapon = shortestDist.proj_isLeft ? leftSpeed : rightSpeed;
-            if (vecWeapon.Length() > 0.0f) {
-                vecWeapon /= vecWeapon.Length();
-                if (oriVel.Length() > 0.0f) {
-                    vecWeapon += oriVel / oriVel.Length() / 1.5;
-                }
-            } else {
-                vecWeapon = RE::NiPoint3(0, 0, 1.0);
-            }
-            vecWeapon /= vecWeapon.Length();
-            vecWeapon *= oriVel.Length();
-            projRuntime.linearVelocity = vecWeapon; 
-            /*if (projType == 4) {
-                projRuntime.linearVelocity *= 0.5f;
-            } else if (projType == 7) {
-                projRuntime.linearVelocity *= 0.8f;
-            } */
-           
-
-            // Deprecated: Trying to change owner to player, but not useful
-            //projRuntime.shooter = projRuntime.desiredTarget;
-            //projRuntime.desiredTarget = casterHandle;
-            //auto oriCause = projRuntime.actorCause.get();
-            //if (oriCause) {
-            //    oriCause->actor = RE::BSPointerHandle<RE::Actor>(playerActor);
-            //} else {
-            //    log::warn("Fail to get projectile actorCause");
-            //}
-
-            // Deprecated: Trying to shoot a new arrow at enemy, but failed
-            /*if (projType == 4) {
-                projRuntime.linearVelocity *= 0.05f;
-                LaunchArrow(proj, playerActor, caster);
-            }*/
-
-            // Trying to disable its spell. Disabling weaponSource and ammoSource seems not very useful
-            projRuntime.spell = nullptr;
-            projRuntime.explosion = nullptr;
-            projRuntime.weaponSource = nullptr;
-            projRuntime.ammoSource = nullptr;
-            projRuntime.power = 0.0f;
-            projRuntime.weaponDamage = 0.0f;
-                
-            // Slow time
-            TimeSlowEffect(playerActor, iTimeSlowFrameProj);
-
-            // Play sound and spark
-            const auto nodeName = shortestDist.proj_isLeft ? "SHIELD"sv : "WEAPON"sv;
-            RE::NiPoint3 contactPos = shortestDist.contactPoint;
-            auto root = netimmerse_cast<RE::BSFadeNode*>(playerActor->Get3D());
-            if (root) {
-                auto bone = netimmerse_cast<RE::NiNode*>(root->GetObjectByName(nodeName));
-                if (bone) {
-                    SKSE::GetTaskInterface()->AddTask(
-                        [playerActor, contactPos, bone]() { 
-                            RE::NiPoint3 P_V = {0.0f, 0.0f, 0.0f};
-                            RE::NiPoint3 contactPosition_tmp = contactPos;
-                            OnMeleeHit::play_sound(playerActor, 0x0003C73C);
-                            OnMeleeHit::play_impact_2(playerActor,
-                                                    RE::TESForm::LookupByID<RE::BGSImpactData>(0x0004BB54), &P_V,
-                                                    &contactPosition_tmp, bone);
-                        });
-                }
-            }
-
+            vNearbyProj.push_back(&b_ref);
             return RE::BSContainer::ForEachResult::kContinue;
         });
     } else {
         log::warn("Fail to get TES singleton");
     }
 
+    for (auto* b_ref : vNearbyProj) {
+        auto proj = b_ref->AsProjectile();
+        bool isMissile = b_ref->Is(RE::FormType::ProjectileMissile);
+        RE::Projectile::PROJECTILE_RUNTIME_DATA& projRuntime = proj->GetProjectileRuntimeData();
+        RE::ObjectRefHandle casterHandle = projRuntime.shooter;
+        RE::NiPoint3 velocity = projRuntime.linearVelocity;
 
-    // Get nearby enemies
+        bool isSlowed = parriedProj.IsSlowed(proj) != 99999;  // 99999 means not slowed
+
+        // Check if the velocity is too low
+        if (velocity.Length() < 100.0f && !isSlowed) {
+            log::trace("Too slow Asprojectile. Name:{}. Speed:{}. Pos:{},{},{}", proj->GetName(), velocity.Length(),
+                       proj->GetPositionX(), proj->GetPositionY(), proj->GetPositionZ());
+            continue;
+        }
+
+        // Check if the projectile already triggered impact
+        int countImpact = 0;
+        for (auto impactIter = projRuntime.impacts.begin(); impactIter != projRuntime.impacts.end(); ++impactIter) {
+            countImpact++;
+            auto impact = *impactIter;
+            if (impact) {
+                log::trace("Impact result:{}", static_cast<int>(impact->impactResult));
+            } else {
+                log::trace("Impact is nullptr");
+            }
+        }
+        if (countImpact > 0) {
+            log::trace("Impact count:{}. Return", countImpact);
+            continue;
+        }
+
+        // Check if it has caster and caster is not player
+        auto caster = casterHandle.get().get();
+        if (!caster || caster == playerActor) {
+            log::trace("Asprojectile without caster or caster is player. Name:{}. Pos:{},{},{}", proj->GetName(),
+                       proj->GetPositionX(), proj->GetPositionY(), proj->GetPositionZ());
+            continue;
+        }
+
+        // Check if it has already been parried
+        if (parriedProj.IsParried(proj)) {
+            log::trace("Found parried Asprojectile. Shooter:{}. Name:{}. Speed:{}. Pos:{},{},{}",
+                       caster->GetDisplayFullName(), proj->GetName(), velocity.Length(), proj->GetPositionX(),
+                       proj->GetPositionY(), proj->GetPositionZ());
+            continue;
+        }
+
+        log::trace("Found Asprojectile. Name:{}. Speed:{}. Pos:{},{},{}", proj->GetName(), velocity.Length(),
+                   proj->GetPositionX(), proj->GetPositionY(), proj->GetPositionZ());
+
+        // Option 1:
+        //// Slow the projectile down, just for once, if player's weapon speed is high enough
+        // auto distProjPlayer = proj->GetPosition().GetDistance(playerActor->GetPosition());
+        // if (parriedProj.IsSlowed(proj) == false && distProjPlayer < fProjSlowRadius &&
+        //     (leftSpeed.SqrLength() > fPlayerWeaponSpeedRewardThres2 ||
+        //      rightSpeed.SqrLength() > fPlayerWeaponSpeedRewardThres2)) {
+        //     // TODO: delete unnecessary angle, velocity,
+        //     log::debug("About to slow a projectile. Dist: {}", distProjPlayer);
+        //     parriedProj.PushSlowed(proj, projRuntime.linearVelocity, proj->GetAngle());
+        //     projRuntime.linearVelocity *= fProjSlowRatio;
+        // }
+
+        // Option 2:
+        // When the player is pressing the trigger, enters slow motion if the projectile is close enough once
+        // However, this alone is not good, because slow motion takes effect a few frames later, not immediately
+
+        // Option 3:
+        // When the player is pressing the trigger, slow the projectile down
+        auto inputManager = RE::BSInputDeviceManager::GetSingleton();
+        auto distProjPlayer = proj->GetPosition().GetDistance(playerActor->GetPosition());
+        log::trace("isSlowed:{}, distProjPlayer:{}, inputManager valid:{}", isSlowed, distProjPlayer,
+                   inputManager != nullptr);
+        if (!isSlowed && distProjPlayer < fProjSlowRadius &&
+            inputManager) {  // 99999 means not slowed
+            // auto vrControllerL = inputManager->GetVRControllerLeft();
+            // auto vrControllerR = inputManager->GetVRControllerRight();
+            // auto keyboard = inputManager->GetKeyboard();
+            // auto mouse = inputManager->GetMouse();
+            // auto virtualKeyboard = inputManager->GetVirtualKeyboard();
+            // auto Gamepad = inputManager->GetGamepad();
+            // auto GamepadHandler = inputManager->GetGamepadHandler();
+            //// All of them below are not null. However, the map size of controllers and virtualKeyboard are 0
+            //// Also, even if Gamepad is not null, Gamepad->IsEnabled() can crash the program
+            //// The map size of mouse and keboard is very large, but accessing them crashes the program
+            // if (vrControllerL)
+            //     log::info("vrControllerL not null. Enabled:{}. butNameMapSize:{}. deviceButMapSize:{}",
+            //     vrControllerL->IsEnabled(),
+            //               vrControllerL->buttonNameIDMap.size(), vrControllerL->deviceButtons.size());
+            // if (vrControllerR)
+            //     log::info("vrControllerR not null. Enabled:{}. butNameMapSize:{}. deviceButMapSize:{}",
+            //     vrControllerR->IsEnabled(),
+            //               vrControllerR->buttonNameIDMap.size(), vrControllerR->deviceButtons.size());
+            // if (keyboard)
+            //     log::info("keyboard not null. Enabled:{}. butNameMapSize:{}. deviceButMapSize:{}",
+            //     keyboard->IsEnabled(),
+            //               keyboard->buttonNameIDMap.size(), keyboard->deviceButtons.size());
+            // if (mouse)
+            //     log::info("mouse not null. Enabled:{}. butNameMapSize:{}. deviceButMapSize:{}", mouse->IsEnabled(),
+            //               mouse->buttonNameIDMap.size(), mouse->deviceButtons.size());
+            // if (virtualKeyboard)
+            //     log::info("virtualKeyboard not null. Enabled:{}. butNameMapSize:{}. deviceButMapSize:{}",
+            //     virtualKeyboard->IsEnabled(),
+            //               virtualKeyboard->buttonNameIDMap.size(), virtualKeyboard->deviceButtons.size());
+            log::trace("iFrameCount:{}, iFrameTriggerPress:{}", iFrameCount, iFrameTriggerPress);
+            if (iFrameCount - iFrameTriggerPress < 3 && iFrameCount - iFrameTriggerPress >= 0) {
+                bool byPassMagCheck = false || (fProjSlowCost == 0);
+                if (iFrameCount - iFrameSlowCost < 90 && iFrameCount - iFrameSlowCost >= 0) {
+                    byPassMagCheck = true;
+                }
+                // Check player magicka
+                auto curMag = playerActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kMagicka);
+                if (curMag >= fProjSlowCost || byPassMagCheck) {
+                    if (!byPassMagCheck) {
+                        playerActor->AsActorValueOwner()->RestoreActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage,
+                                                                            RE::ActorValue::kMagicka, -fProjSlowCost);
+                        iFrameSlowCost = iFrameCount;
+                    }
+                    float oriZ = projRuntime.linearVelocity.z;
+                    projRuntime.linearVelocity *= fProjSlowRatio;
+                    /*projRuntime.linearVelocity.y *= fProjSlowRatio;
+                    projRuntime.linearVelocity.z *= fProjSlowRatio;*/
+                    log::trace("Trigger pressed. Magicka before cost:{}. Speed after slow down:{}", curMag,
+                               formatNiPoint3(projRuntime.linearVelocity));
+                    parriedProj.PushSlowed(proj, oriZ);
+
+                } else {
+                    log::trace("Trigger pressed. Magicka not enough:{}", curMag);
+                }
+            }
+        }
+
+        if (auto indexSlowed = parriedProj.IsSlowed(proj); indexSlowed != 99999) {
+            // If the slow is still effective, compensate the gravity
+            auto frameDiff = iFrameCount - parriedProj.bufferFrameSlow[indexSlowed];
+            log::trace("Frame diff:{}. iProjSlowFrame:{}", frameDiff, iProjSlowFrame);
+            if (frameDiff < iProjSlowFrame && frameDiff > 0) {
+                log::trace("Compensate gravity. Current z:{}", projRuntime.linearVelocity.z);
+                projRuntime.linearVelocity.z = parriedProj.bufSlowVelZ[indexSlowed] * fProjSlowRatio;
+            }
+
+            // If the slow should expire, restore the velocity
+            if (frameDiff >= iProjSlowFrame && parriedProj.bufSlowRestored[indexSlowed] == false) {
+                projRuntime.linearVelocity /= fProjSlowRatio;
+                // projRuntime.linearVelocity.y /= fProjSlowRatio;
+                parriedProj.bufSlowRestored[indexSlowed] = true;
+                // projRuntime.linearVelocity.z = parriedProj.bufSlowVelZ[indexSlowed];
+                log::trace("Restore speed. Final speed:{}", formatNiPoint3(projRuntime.linearVelocity));
+            }
+        }
+
+        // See if player successfully parries it
+        // Missiles or not slowed can have easier parry, since they may explode on player's weapon is Higgs is installed
+        if (!bAbleToParry) continue;
+        DistResult shortestDist =
+            weapPosBuf.ShortestDisRecently(iProjCollisionFrame, proj->GetPosition(), velocity, isSlowed);
+        if (shortestDist.dist > fProjCollisionDistThres || (isMissile && shortestDist.dist > fProjCollisionDistThres + 15.0f)) {
+            log::trace("Parry projectile no success. Dist:{}", shortestDist.dist);
+            log::trace("Left weapon bot:{}. top:{}",
+                       formatNiPoint3(weapPosBuf.bufferL[weapPosBuf.indexCurrentL].bottom),
+                       formatNiPoint3(weapPosBuf.bufferL[weapPosBuf.indexCurrentL].top));
+            log::trace("Right weapon bot:{}. top:{}",
+                       formatNiPoint3(weapPosBuf.bufferR[weapPosBuf.indexCurrentR].bottom),
+                       formatNiPoint3(weapPosBuf.bufferR[weapPosBuf.indexCurrentR].top));
+            continue;
+        }
+
+        // Mark as parried, to avoid being parried multiple times
+        parriedProj.PushParried(proj);
+
+        auto oriVel = projRuntime.linearVelocity;
+        log::trace("Parried projectile! Ori Velocity:{},{},{}", oriVel.x, oriVel.y, oriVel.z);
+
+        //// Option 1: Set the projectile to fly to its caster
+        // RE::NiPoint3 vecToCaster = caster->GetPosition() + RE::NiPoint3(0, 0, 50.0f) - proj->GetPosition();
+        // if (vecToCaster.Length() > 0.0f) vecToCaster /= vecToCaster.Length();
+        // vecToCaster *= oriVel.Length();
+        // projRuntime.linearVelocity = vecToCaster;
+
+        // Option 2: Set the projectile to fly to player's weapon direction
+        RE::NiPoint3 vecWeapon = shortestDist.proj_isLeft ? leftSpeed : rightSpeed;
+        if (vecWeapon.Length() > 0.0f) {
+            vecWeapon /= vecWeapon.Length();
+            if (oriVel.Length() > 0.0f) {
+                vecWeapon += oriVel / oriVel.Length() / 1.5;
+            }
+        } else {
+            vecWeapon = RE::NiPoint3(0, 0, 1.0);
+        }
+        vecWeapon /= vecWeapon.Length();
+        vecWeapon *= oriVel.Length();
+        projRuntime.linearVelocity = vecWeapon;
+        /*if (projType == 4) {
+            projRuntime.linearVelocity *= 0.5f;
+        } else if (projType == 7) {
+            projRuntime.linearVelocity *= 0.8f;
+        } */
+
+        // Deprecated: Trying to change owner to player, but not useful
+        // projRuntime.shooter = projRuntime.desiredTarget;
+        // projRuntime.desiredTarget = casterHandle;
+        // auto oriCause = projRuntime.actorCause.get();
+        // if (oriCause) {
+        //    oriCause->actor = RE::BSPointerHandle<RE::Actor>(playerActor);
+        //} else {
+        //    log::warn("Fail to get projectile actorCause");
+        //}
+
+        // Deprecated: Trying to shoot a new arrow at enemy, but failed
+        /*if (projType == 4) {
+            projRuntime.linearVelocity *= 0.05f;
+            LaunchArrow(proj, playerActor, caster);
+        }*/
+
+        // Trying to disable its spell. Disabling weaponSource and ammoSource seems not very useful
+        projRuntime.spell = nullptr;
+        projRuntime.explosion = nullptr;
+        projRuntime.weaponSource = nullptr;
+        projRuntime.ammoSource = nullptr;
+        projRuntime.power = 0.0f;
+        projRuntime.weaponDamage = 0.0f;
+
+        // Slow time
+        TimeSlowEffect(playerActor, iTimeSlowFrameProj);
+
+        // Play sound and spark
+        auto nodeName = shortestDist.proj_isLeft ? "SHIELD"sv : "WEAPON"sv;
+        if (isPlayerUsingClaw) {
+            nodeName = shortestDist.proj_isLeft ? "NPC L Hand [RHnd]"sv : "WEAPON"sv;
+        }
+        RE::NiPoint3 contactPos = shortestDist.contactPoint;
+        auto root = netimmerse_cast<RE::BSFadeNode*>(playerActor->Get3D());
+        if (root) {
+            auto bone = netimmerse_cast<RE::NiNode*>(root->GetObjectByName(nodeName));
+            if (bone) {
+                SKSE::GetTaskInterface()->AddTask([playerActor, contactPos, bone]() {
+                    RE::NiPoint3 P_V = {0.0f, 0.0f, 0.0f};
+                    RE::NiPoint3 contactPosition_tmp = contactPos;
+                    OnMeleeHit::play_sound(playerActor, 0x0003C73C);
+                    OnMeleeHit::play_impact_2(playerActor, RE::TESForm::LookupByID<RE::BGSImpactData>(0x0004BB54), &P_V,
+                                              &contactPosition_tmp, bone);
+                });
+            }
+        }
+    }
+
+    if (!bAbleToParry) return;
+
+    // Get nearby enemies and flor/tree
     std::vector<RE::TESObjectREFR*> vNearbyObj;
+    std::vector<RE::TESObjectREFR*> vNearbyTree;
     if (const auto TES = RE::TES::GetSingleton(); TES) {
         TES->ForEachReferenceInRange(playerRef, fDetectEnemy, [&](RE::TESObjectREFR& b_ref) {
             if (const auto base = b_ref.GetBaseObject(); base && b_ref.Is3DLoaded()) {
@@ -606,10 +630,10 @@ void ZacOnFrame::CollisionDetection() {
                     if (distThres < 15.0f) distThres = 15.0f;
                     break;
                 case 3:  // races that use claws: werewolf or werebear or trolls or bears or hagraven
-                    if (distThres < 15.0f) distThres = 15.0f;
+                    if (distThres < 20.0f) distThres = 20.0f;
                     break;
                 case 5: // cats
-                    if (distThres < 15.0f) distThres = 15.0f;
+                    if (distThres < 18.0f) distThres = 18.0f;
                     break;
                 case 6: // dwenmer spider
                     if (distThres < 15.0f) distThres = 15.0f;
@@ -625,6 +649,13 @@ void ZacOnFrame::CollisionDetection() {
                 default:
                     break;
             }
+
+            // If player is special race, change the distThres
+            if (playerActor->GetRace()->formID == werewolfRace ||
+                GetBaseFormID(playerActor->GetRace()->formID) == vampLord) {
+                if (distThres < 20.0f) distThres = 20.0f;
+            }
+
 
             // Now detect collision
             if (dis_playerL_enemyL.dist < distThres) {
@@ -661,7 +692,7 @@ void ZacOnFrame::CollisionDetection() {
                             playerActor->AsActorValueOwner()->GetPermanentActorValue(RE::ActorValue::kStamina)) {
                         log::trace("Player current stamina is not enough for parry. Stamina:{}", playerCurSta);
                         RE::DebugNotification("Stamina not enough for parry");
-                        return;
+                        continue;
                     }
                 }
 
@@ -709,12 +740,6 @@ void ZacOnFrame::CollisionDetection() {
             }
         }
     }
-
-    
-
-    
-
-    // Create collision data
 }
 
 void ZacOnFrame::TimeSlowEffect(RE::Actor* playerActor, int64_t slowFrame) { 
@@ -730,10 +755,13 @@ void ZacOnFrame::TimeSlowEffect(RE::Actor* playerActor, int64_t slowFrame) {
     }
 
     if (slowTimeData.timeSlowSpell == nullptr) {
-        RE::SpellItem* timeSlowSpell = GetTimeSlowSpell();
+        RE::SpellItem* timeSlowSpell = GetTimeSlowSpell_SpeelWheel();
         if (!timeSlowSpell) {
-            log::trace("TimeSlowEffect: failed to get timeslow spell");
-            return;
+            timeSlowSpell = GetTimeSlowSpell_Mine();
+            if (!timeSlowSpell) {
+                log::trace("TimeSlowEffect: failed to get timeslow spell");
+                return;
+            }
         }
         slowTimeData.timeSlowSpell = timeSlowSpell;
     }
@@ -812,8 +840,13 @@ void ZacOnFrame::StopTimeSlowEffect(RE::Actor* playerActor) {
 
 void ZacOnFrame::CollisionEffect(RE::Actor* playerActor, RE::Actor* enemyActor, RE::NiPoint3 contactPos, bool isEnemyLeft, bool isPlayerLeft) {
    
-    const auto nodeName = isEnemyLeft?
+    auto nodeName = isPlayerLeft?
         "SHIELD"sv: "WEAPON"sv;
+    bool isPlayerUsingClaw = false;
+    if (GetSpecialRace(playerActor) == 3) {
+        nodeName = isPlayerLeft ? "NPC L Hand [RHnd]"sv : "WEAPON"sv;
+        isPlayerUsingClaw = true;
+    }
     auto rootEnemy = netimmerse_cast<RE::BSFadeNode*>(enemyActor->Get3D());
     if (!rootEnemy) return;
     auto rootPlayer = netimmerse_cast<RE::BSFadeNode*>(playerActor->Get3D());
@@ -822,15 +855,33 @@ void ZacOnFrame::CollisionEffect(RE::Actor* playerActor, RE::Actor* enemyActor, 
     if (!bonePlayer) return;
     const auto nodeNameFoot = "NPC L Toe0 [LToe]"sv;
     auto boneFoot = netimmerse_cast<RE::NiNode*>(rootEnemy->GetObjectByName(nodeNameFoot));
+
+    bDisableSpark = false;
     // Display spark and sound
+    if (!bSparkForBeast) {
+        if (isPlayerUsingClaw) bDisableSpark = true;
+        switch (GetSpecialRace(enemyActor)) { 
+            case 2:
+            case 3:
+            case 5:
+                bDisableSpark = true;
+                break;
+            default:
+                break;
+        }
+    }
+
     SKSE::GetTaskInterface()->AddTask([playerActor, enemyActor, contactPos, bonePlayer, boneFoot]() {
         RE::NiPoint3 contact = contactPos;
         RE::NiPoint3 P_V = {0.0f, 0.0f, 0.0f};
         OnMeleeHit::play_sound(enemyActor, 0x0003C73C);
         // Display spark on enemy's weapon, at the collision point
         if (!playerActor->Is3DLoaded()) return;
-        OnMeleeHit::play_impact_2(playerActor, RE::TESForm::LookupByID<RE::BGSImpactData>(0x0004BB54), &P_V, &contact,
-                                  bonePlayer);
+
+        if (!bDisableSpark) {
+            OnMeleeHit::play_impact_2(playerActor, RE::TESForm::LookupByID<RE::BGSImpactData>(0x0004BB54), &P_V,
+                                      &contact, bonePlayer);
+        }
 
         if (!boneFoot) return;
         // Display dust under enemy's foot
@@ -1231,21 +1282,21 @@ bool ZacOnFrame::FrameGetWeaponPos(RE::Actor* actor, RE::NiPoint3& posWeaponBott
     // 1. Dwenmer sphere. Gotta say this is still not good: the adjust matrix works fine when they stand, but when they attack their weapon is quite off
     auto weapDSphere = HandleDwenmerSphere(actor, posWeaponBottomL, posWeaponBottomR, posWeaponTopL, posWeaponTopR);
     if (weapDSphere) { 
-        if (bShowEnemyWeaponSegment && !isPlayer && bDisplayEnemySegmentCheck) {
+        if ((bShowEnemyWeaponSegment && !isPlayer && bDisplayEnemySegmentCheck) || (isPlayer && bShowPlayerWeaponSegment)) {
             debug_show_weapon_range(actor, posWeaponBottomR, posWeaponTopR, weapDSphere);
         }
     }
     // 2. Races that use mouth as their weapon: wolf, skeever
     auto weapWolfHead = HandleMouthRace(actor, posWeaponBottomL, posWeaponBottomR, posWeaponTopL, posWeaponTopR);
     if (weapWolfHead) {
-        if (bShowEnemyWeaponSegment && !isPlayer && bDisplayEnemySegmentCheck) {
+        if ((bShowEnemyWeaponSegment && !isPlayer && bDisplayEnemySegmentCheck) || (isPlayer && bShowPlayerWeaponSegment)) {
             debug_show_weapon_range(actor, posWeaponBottomR, posWeaponTopR, weapWolfHead);
         }
     }
     // 3. Races that use claws as weapon Werewolf or werebear or troll or bear or spriggan or hagraven
     twoNodes claws = HandleClawRaces(actor, posWeaponBottomL, posWeaponBottomR, posWeaponTopL, posWeaponTopR);
     if (!claws.isEmpty()) {
-        if (bShowEnemyWeaponSegment && !isPlayer && bDisplayEnemySegmentCheck) {
+        if ((bShowEnemyWeaponSegment && !isPlayer && bDisplayEnemySegmentCheck) || (isPlayer && bShowPlayerWeaponSegment)) {
             debug_show_weapon_range(actor, posWeaponBottomR, posWeaponTopR, claws.nodeR);
             debug_show_weapon_range(actor, posWeaponBottomL, posWeaponTopL, claws.nodeL);
         }
@@ -1258,7 +1309,7 @@ bool ZacOnFrame::FrameGetWeaponPos(RE::Actor* actor, RE::NiPoint3& posWeaponBott
     twoNodes clawAndHead =
         HandleClawAndHeadRaces(actor, posWeaponBottomL, posWeaponBottomR, posWeaponTopL, posWeaponTopR);
     if (!clawAndHead.isEmpty()) {
-        if (bShowEnemyWeaponSegment && !isPlayer && bDisplayEnemySegmentCheck) {
+        if ((bShowEnemyWeaponSegment && !isPlayer && bDisplayEnemySegmentCheck) || (isPlayer && bShowPlayerWeaponSegment)) {
             debug_show_weapon_range(actor, posWeaponBottomR, posWeaponTopR, clawAndHead.nodeR);
             debug_show_weapon_range(actor, posWeaponBottomL, posWeaponTopL, clawAndHead.nodeL);
         }
@@ -1266,7 +1317,7 @@ bool ZacOnFrame::FrameGetWeaponPos(RE::Actor* actor, RE::NiPoint3& posWeaponBott
     // 6. Dwenmer spider. Use their right leg and a right pincher as weapons. left let and pincher can't be parried
     twoNodes DWorkerLegs = HandleDwenmerSpider(actor, posWeaponBottomL, posWeaponBottomR, posWeaponTopL, posWeaponTopR);
     if (!DWorkerLegs.isEmpty()) {
-        if (bShowEnemyWeaponSegment && !isPlayer && bDisplayEnemySegmentCheck) {
+        if ((bShowEnemyWeaponSegment && !isPlayer && bDisplayEnemySegmentCheck) || (isPlayer && bShowPlayerWeaponSegment)) {
             debug_show_weapon_range(actor, posWeaponBottomR, posWeaponTopR, DWorkerLegs.nodeR);
             debug_show_weapon_range(actor, posWeaponBottomL, posWeaponTopL, DWorkerLegs.nodeL);
         }
@@ -1276,7 +1327,7 @@ bool ZacOnFrame::FrameGetWeaponPos(RE::Actor* actor, RE::NiPoint3& posWeaponBott
     twoNodes FSpiderClaws = twoNodes(nullptr, nullptr);
     //twoNodes FSpiderClaws = HandleFrostSpider(actor, posWeaponBottomL, posWeaponBottomR, posWeaponTopL, posWeaponTopR);
     //if (!FSpiderClaws.isEmpty()) {
-    //    if (bShowEnemyWeaponSegment && !isPlayer && bDisplayEnemySegmentCheck) {
+    //    if ((bShowEnemyWeaponSegment && !isPlayer && bDisplayEnemySegmentCheck) || (isPlayer && bShowPlayerWeaponSegment)) {
     //        debug_show_weapon_range(actor, posWeaponBottomR, posWeaponTopR, FSpiderClaws.nodeR);
     //        debug_show_weapon_range(actor, posWeaponBottomL, posWeaponTopL, FSpiderClaws.nodeL);
     //    }
@@ -1447,7 +1498,10 @@ bool ZacOnFrame::FrameGetWeaponFixedPos(RE::Actor* actor, RE::NiPoint3& posWeapo
         isFistL = true;
     }
 
-    if (!hasShield && weaponL &&
+    // Handling werewolf and vampire lord for player
+    twoNodes claws = HandleClawRaces(actor, posHandL, posHandR, posWeaponTopL, posWeaponTopR);
+
+    if (!hasShield && claws.isEmpty() && weaponL &&
         (isEquipL || (isFistL && isFistR))) {  // only enable fist collision when both hands are fist
         float reachL(70.0f);
         
@@ -1461,7 +1515,7 @@ bool ZacOnFrame::FrameGetWeaponFixedPos(RE::Actor* actor, RE::NiPoint3& posWeapo
         // Animals, dragons will reach here
     }
 
-    if (weaponR && (isEquipR || (isFistL && isFistR))) {
+    if (claws.isEmpty() && weaponR && (isEquipR || (isFistL && isFistR))) {
         float reachR(70.0f);
    
         reachR *= fRangeMulti;

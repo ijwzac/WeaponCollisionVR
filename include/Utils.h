@@ -31,9 +31,14 @@ RE::NiMatrix3 ConvertToPlayerSpace(const RE::NiMatrix3& R_weapon_world_space,
 RE::NiMatrix3 ConvertToWorldSpace(const RE::NiMatrix3& R_weapon_player_space,
                                   const RE::NiMatrix3& R_player_world_space);
 
-uint32_t GetFullFormID(const uint8_t modIndex, uint32_t formLower);
+RE::NiMatrix3 adjustNodeRotation(RE::NiNode* baseNode, RE::NiMatrix3& rotation, RE::NiPoint3 adjust, bool useAdjust2);
 
-RE::SpellItem* GetTimeSlowSpell();
+uint32_t GetBaseFormID(uint32_t formId);
+uint32_t GetFullFormID(const uint8_t modIndex, uint32_t formLower);
+uint32_t GetFullFormID_ESL(const uint8_t modIndex, const uint16_t esl_index, uint32_t formLower);
+
+RE::SpellItem* GetTimeSlowSpell_SpeelWheel();
+RE::SpellItem* GetTimeSlowSpell_Mine();
 
 class twoNodes {
 public:
