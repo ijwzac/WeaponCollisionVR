@@ -36,7 +36,7 @@ void OnMeleeHitHook::OnMeleeHit(RE::Actor* hit_causer, RE::Actor* hit_target, st
         auto playerAA = RE::PlayerCharacter::GetSingleton();
         if (playerAA) {
             auto playerActor = static_cast<RE::Actor*>(playerAA);
-            if (playerActor) {
+            if (playerActor && iFrameStopBlock == 0) { // if iFrameStopBlock is not 0, player is blocking under our mod
                 log::trace("Hit causer:{}. Target:{}. Causer is player:{}", hit_causer->GetDisplayFullName(), hit_target->GetDisplayFullName(), hit_causer == playerActor);
                 if (hit_target == playerActor) {
                     log::trace("Delay a hit to player");

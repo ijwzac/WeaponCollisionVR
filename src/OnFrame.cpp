@@ -118,6 +118,27 @@ void ZacOnFrame::CollisionDetection() {
         StopTimeSlowEffect(playerActor);
     }
 
+    // Check if we should stop blocking
+    if (iFrameCount >= iFrameStopBlock && iFrameStopBlock != 0) {
+        iFrameStopBlock = 0;
+        playerActor->NotifyAnimationGraph("blockStop"sv);
+        //// Change block config
+        //auto iniHandler = RE::INISettingCollection::GetSingleton();
+        //if (iniHandler) {
+        //    auto blockEnter = iniHandler->GetSetting("fVRShieldBlockEnterAngle");
+        //    auto blockExit = iniHandler->GetSetting("fVRShieldBlockExitAngle");
+        //    if (blockEnter && blockExit) {
+        //        blockExit->data.f = fOriginExitAngle;
+        //        iniHandler->WriteSetting(blockExit);
+        //    }
+
+        //} else {
+        //    log::warn("iniHandler is null!");
+        //}
+
+
+    }
+
 
     // See if we need to fire a delayed melee event
     // log::trace("About to check meleeQueue");
@@ -700,6 +721,14 @@ void ZacOnFrame::CollisionDetection() {
                 auto playerWeapSpeed = isPlayerLeft ? leftSpeed : rightSpeed;
                 auto speed = playerWeapSpeed.SqrLength();
 
+                // Check if collision with shield
+                bool isBlocking = false;
+                if (bEnableShieldCollision && bTreatShieldAsParry == false) {
+                    if (auto equipL = playerActor->GetEquippedObject(true); equipL && equipL->IsArmor()) {
+                        isBlocking = true;
+                    }
+                }
+
                 // push the enemy away by this velocity. Will be used for the next few frames
                 RE::hkVector4 pushEnemyVelocity =
                     CalculatePushVector(playerActor->GetPosition(), actorNPC->GetPosition(), true, speed);
@@ -711,6 +740,12 @@ void ZacOnFrame::CollisionDetection() {
                 }
                 bool isRotClockwise = ShouldRotateClockwise(playerActor->GetPosition(), actorNPC->GetPosition(), playerWeapSpeed);
                 int64_t rotDurationFrame = RotateFrame(playerWeapSpeed.SqrLength());
+
+                // If blocking, there should be no pushback, rotation
+                if (isBlocking) {
+                    rotDurationFrame = 0;
+                    pushEnemyVelocity = pushEnemyVelocity * 0;
+                }
 
                 auto col = Collision(actorNPC, iFrameCount, actorNPC->GetPosition(),
                                      CalculatePushDist(true, speed), contactToEnemyHand, isEnemyLeft,
@@ -732,6 +767,9 @@ void ZacOnFrame::CollisionDetection() {
                 static PlayerCollision* latestCol = PlayerCollision::GetSingleton();
                 RE::hkVector4 pushPlayerVelocity =
                     CalculatePushVector(actorNPC->GetPosition(), playerActor->GetPosition(), false, speed);
+
+                if (isBlocking) pushPlayerVelocity = pushPlayerVelocity * 0;
+
                 latestCol->SetValue(iFrameCount, contactToPlayerHand, isPlayerLeft, pushPlayerVelocity, 10,
                                     CalculatePushDist(false, speed), playerActor->GetPosition(), playerActor);
 
@@ -891,6 +929,48 @@ void ZacOnFrame::CollisionEffect(RE::Actor* playerActor, RE::Actor* enemyActor, 
         OnMeleeHit::play_impact_2(enemyActor, RE::TESForm::LookupByID<RE::BGSImpactData>(0x00013CBA), &P_V, &foot,
                                   boneFoot);
     });
+
+    // Check if is Shield
+    // Deprecated: playerActor->NotifyAnimationGraph("blockStart"sv) can make player move slower and kinda blocks
+    // However, it doesn't make shield shake or enemy recoil as blocking should do. Also, damage taken is between hit and correct blocking
+    if (bEnableShieldCollision && bTreatShieldAsParry == false) {
+        if (auto equipL = playerActor->GetEquippedObject(true); equipL && equipL->IsArmor()) {
+
+            
+            bool bNotifyResult = playerActor->NotifyAnimationGraph("blockStart"sv);
+            log::debug("Processing shield collision as block. Animation notify result:{}", bNotifyResult);
+            iFrameStopBlock = iFrameCount + iFrameBlockDur;
+
+            //// Change block config
+            // Deprecated: "blockEnter null:true, blockExit null:true"
+            //auto iniHandler = RE::INISettingCollection::GetSingleton();
+            //if (iniHandler) {
+
+            //    auto blockEnter = iniHandler->GetSetting("fVRShieldBlockEnterAngle");
+            //    auto blockExit = iniHandler->GetSetting("fVRShieldBlockExitAngle");
+            //    if (blockEnter && blockExit) {
+            //        log::debug("Prev Shield enter angle:{}", blockEnter->data.f);
+            //        log::debug("Prev Shield exit angle:{}", blockExit->data.f);
+            //        fOriginEnterAngle = blockEnter->data.f;
+            //        fOriginExitAngle = blockExit->data.f;
+
+            //        blockExit->data.f = 180.0f;
+            //        iniHandler->WriteSetting(blockExit);
+
+            //    } else {
+            //        log::warn("blockEnter null:{}, blockExit null:{}", blockEnter == nullptr, blockExit == nullptr);
+            //    }
+
+
+            //} else {
+            //    log::warn("iniHandler is null!");
+            //}
+
+
+            return;
+        }
+    }
+    
 
     // if enemy is power attacking, double sta cost to player
     bool isEnemyPower = false;
@@ -1336,9 +1416,9 @@ bool ZacOnFrame::FrameGetWeaponPos(RE::Actor* actor, RE::NiPoint3& posWeaponBott
 
     // Handling normal humanoid actors
     if (!weapDSphere && !weapWolfHead && claws.isEmpty() && clawAndHead.isEmpty() && DWorkerLegs.isEmpty() &&
-        FSpiderClaws.isEmpty()
-        && !hasShield && weaponL 
-        && (isEquipL || (isFistL && isFistR) ) &&
+        FSpiderClaws.isEmpty() && weaponL 
+        &&
+        (isEquipL || (isFistL && isFistR) || (isPlayer && bEnableShieldCollision && hasShield)) &&
         !(!isPlayer && isBow) && !(!isPlayer && isStaffL)  // ignore enemy's bow and staff
         ) { // only enable fist collision when both hands are fist
         float reachL(0.0f), handleL(0.0f);
@@ -1370,6 +1450,10 @@ bool ZacOnFrame::FrameGetWeaponPos(RE::Actor* actor, RE::NiPoint3& posWeaponBott
             reachL = 70.0f;
             handleL = 70.0f;
             log::trace("Left: staff. actor:{}", actor->GetBaseObject()->GetName());
+        } else if (hasShield) {
+            reachL = fShieldRadius;
+            handleL = fShieldRadius;
+            log::trace("Left: Shield. actor:{}", actor->GetBaseObject()->GetName());
         } else {
             log::trace("Left: unknown. actor:{}", actor->GetBaseObject()->GetName());
         }
@@ -1501,8 +1585,8 @@ bool ZacOnFrame::FrameGetWeaponFixedPos(RE::Actor* actor, RE::NiPoint3& posWeapo
     // Handling werewolf and vampire lord for player
     twoNodes claws = HandleClawRaces(actor, posHandL, posHandR, posWeaponTopL, posWeaponTopR);
 
-    if (!hasShield && claws.isEmpty() && weaponL &&
-        (isEquipL || (isFistL && isFistR))) {  // only enable fist collision when both hands are fist
+    if (claws.isEmpty() && weaponL &&
+        (isEquipL || (isFistL && isFistR) || (bEnableShieldCollision && hasShield))) {  // only enable fist collision when both hands are fist
         float reachL(70.0f);
         
         posHandL = weaponL->world.translate;
@@ -1575,5 +1659,6 @@ void ZacOnFrame::CleanBeforeLoad() {
     iFrameCount = 0;
     iFrameSlowCost = 0;
     iFrameTriggerPress = 0;
+    iFrameStopBlock = 0;
     parriedProj.Clear();
 }

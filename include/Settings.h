@@ -10,6 +10,7 @@ extern bool bHandToHandLoad;
 extern bool bPlanck;
 extern int64_t iFrameSlowCost;
 extern std::chrono::steady_clock::time_point last_time;
+extern int64_t iFrameStopBlock;
 
 // Parry difficulty
 extern float fRangeMulti;          // controls the effective length of weapon in this mod
@@ -29,6 +30,14 @@ extern int64_t iProjSlowFrame; // How many frames will the projectile be slowed
 extern float fProjSlowCost; // Magicka cost to slow projectile
 extern uint32_t iProjSlowButton1; // 33 is vr trigger. 4096 is xbox controller A. 18 is keyboard E
 extern uint32_t iProjSlowButton2;
+
+// Shield collision
+extern bool bEnableShieldCollision;
+extern bool bTreatShieldAsParry;
+extern float fShieldRadius;
+extern int64_t iFrameBlockDur;
+extern float fOriginEnterAngle, fOriginExitAngle;
+
 
 // Parry effect on enemy
 extern float fEnemyPushVelocityMulti;  // the speed multiplier that the enemy will be pushed
@@ -178,6 +187,10 @@ public:
     struct Projectile {
         void Load(CSimpleIniA& a_ini);
     } sProjectile;
+
+    struct Shield {
+        void Load(CSimpleIniA& a_ini);
+    } sShield;
 
 private:
     Settings() = default;

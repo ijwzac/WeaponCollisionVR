@@ -15,6 +15,7 @@ bool bShowEnemyWeaponSegment = false;
 int64_t iFrameCount = 0;
 int64_t iFrameTriggerPress = 0;
 int64_t iFrameSlowCost = 0;
+int64_t iFrameStopBlock = 0;
 int iTraceLevel = 2;
 bool bPlayerMustBeAttacking = false;
 int64_t iSparkSpawn = 6;
@@ -34,6 +35,14 @@ int64_t iProjSlowFrame = 60;
 float fProjSlowCost = 10.0f;
 uint32_t iProjSlowButton1 = 33;
 uint32_t iProjSlowButton2 = 33;
+
+// Shield collision
+bool bEnableShieldCollision = true;
+bool bTreatShieldAsParry = false;
+float fShieldRadius = 40.0f;
+int64_t iFrameBlockDur = 20;
+float fOriginEnterAngle = 30.0f;
+float fOriginExitAngle = 35.0f;
 
 // Enemy
 float fEnemyPushVelocityMulti = 8.0f;
@@ -111,6 +120,7 @@ void Settings::Load() {
     sEffectOnEnemy.Load(ini);
     sEffectOnPlayer.Load(ini);
     sExperience.Load(ini);
+    sShield.Load(ini);
     sProjectile.Load(ini);
     sTechnique.Load(ini);
 
@@ -390,9 +400,27 @@ void Settings::Experience::Load(CSimpleIniA& a_ini) {
         "; Each collision gives player this amount of hand-to-hand experience. Default:\"2.0\"");
 }
 
+void Settings::Shield::Load(CSimpleIniA& a_ini) {
+    static const char* section = "==========6. Shield Collision==========";
+
+    detail::get_value(a_ini, bEnableShieldCollision, section, "EnableShieldCollision",
+            "; Whether this mod calculates collision between player's shield and enemy's weapons and projectiles. Default:\"true\"");
+    detail::get_value(a_ini, bTreatShieldAsParry, section, "TreatShieldAsParry",
+            "; If true, shield will be handled as if it's a weapon, triggering the parry system of this mod.\n"
+            "; If false, shield will be different: it triggers vanilla blocking system and other blocking mods. Default:\"false\"");
+    detail::get_value(a_ini, fShieldRadius, section, "ShieldRadius",
+            "; Radius of shield's collision. If you feel the collision doesn't match the shield's model, adjust this. Default:\"40.0\"");
+    detail::get_value(a_ini, iFrameBlockDur, section, "BlockDurationFrame",
+            "; If TreatShieldAsParry is false, this value takes effect.\n"
+            "; When enemy's weapon touches player's shield, player will start blocking pose for a few frames and stop.\n"
+            "; This is the number of frames. If this value doesn't exist, player will be stuck in blocking pose.\n"
+            "; If you ever get stuck in blocking pose, you can jump to stop it. Welcome to report a bug to me!\n"
+            "; Default:\"20\"");
+}
+
 
 void Settings::Projectile::Load(CSimpleIniA& a_ini) {
-    static const char* section = "==========6. Projectile Parry==========";
+    static const char* section = "==========7. Projectile Parry==========";
 
     
     detail::get_value(a_ini, fProjLength, section, "ProjectileLength",
@@ -438,6 +466,7 @@ void Settings::Projectile::Load(CSimpleIniA& a_ini) {
         "; How many frames will the projectile be slowed.\n"
         "; Default:\"60\"");
 }
+
 
 
 
