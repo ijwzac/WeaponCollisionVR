@@ -99,6 +99,8 @@ namespace ZacOnFrame {
         // Should be called during OnMeleeHit of enemy. If return true, their hit should be nullified by caller
         // Conditions: the frame is very close, or (the frame is relatively close and affectEnemyOnHit is 1)
         bool shouldNullifyEnemyCurretHit() {
+            log::debug("shouldNullify? iFrameCollision: {}, iFrameCount:{}, affectEnemyOnHit:{}", iFrameCollision,
+                       iFrameCount, affectEnemyOnHit);
             if (iFrameCollision == -1) return false;
             bool nullify = false;
             auto diff = iFrameCount - iFrameCollision;
@@ -415,7 +417,7 @@ namespace ZacOnFrame {
         }
 
         // The shortest distance between player's weapon and the given projectile, in the last N frames
-        DistResult ShortestDisRecently(std::size_t N, RE::NiPoint3 posProj, RE::NiPoint3 velocity, bool isSlowed) {
+        DistResult ShortestDisRecently(std::size_t N, RE::NiPoint3 posProj, RE::NiPoint3 velocity, bool isSlowed, bool ignoreLeft, float leftSpeed, float rightSpeed) {
             float shortestDist = 9999.0f;
             DistResult shortestResult = DistResult();
             float extraLength = 0.0f;
@@ -428,6 +430,9 @@ namespace ZacOnFrame {
             }
             for (int i = 0; i < 2; i++) {
                 bool isLeft = i == 0 ? true : false;
+                if (isLeft && ignoreLeft) continue;
+                auto speedWeap = isLeft ? leftSpeed : rightSpeed;
+                if (speedWeap < fProjWeapSpeedThres) continue;
                 std::size_t currentIdx = isLeft ? indexCurrentL : indexCurrentR;
                 std::vector<WeaponPos>& buffer = isLeft ? bufferL : bufferR;
                 for (std::size_t frameCount = 0; frameCount < N; frameCount++) {
@@ -623,6 +628,6 @@ namespace ZacOnFrame {
     };
     extern ParriedProj parriedProj;
 
-    
+    void FillShieldCenterNormal(RE::Actor* actor, RE::NiPoint3& shieldCenter, RE::NiPoint3& shieldNormal);
 }
 

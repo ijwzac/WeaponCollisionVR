@@ -5,6 +5,21 @@
 //void DisableHiggsWeapCol();
 //void EnableHiggsWeapCol();
 
+
+
+// This function only fires once per 30 seconds
+void SetCone(float newConeAngle);
+
+// This function fires no matter what
+void ForceSetCone(float newConeAngle);
+
+bool HasShield(RE::Actor* actor);
+
+
+bool IsFriend(RE::Actor* actor1, RE::Actor* actor2);
+
+void vibrateController(int hapticFrame, bool isLeft);
+
 std::string formatNiPoint3(RE::NiPoint3& pos);
 
 bool IsNiPointZero(const RE::NiPoint3& pos);

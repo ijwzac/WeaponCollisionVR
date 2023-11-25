@@ -20,20 +20,32 @@ bool bPlayerMustBeAttacking = false;
 int64_t iSparkSpawn = 6;
 std::chrono::steady_clock::time_point last_time;
 
+// Block
+int64_t iFrameStopBlock = 0;
+bool bEnableShieldCollision = true;
+int64_t iFrameBlockDur = 30;
+float fShieldRadius = 33.0f;
+float fOriginCone = 35.0f;
+int64_t iFrameSetCone = 0;
+bool bPressButtonToBlock = false;
+uint32_t iBlockButton = 33;
+int64_t iFramePressBlockButton = 0;
 
 // Projectile Parry
 bool bEnableProjParry = true;
-float fProjDetectRange = 700.0f;  // The range of projectile detection
+float fProjDetectRange = 800.0f;  // The range of projectile detection
 float fProjCollisionDistThres = 12.0f;         // If weapon and projectile distance is smaller than this number, it's a collision
 float fProjLength = 50.0f;
 int64_t iProjCollisionFrame = 5;  // Collision is calculated for player's weapon positions for the last X frames
 int64_t iTimeSlowFrameProj = 30;
-float fProjSlowRatio = 0.20f;
-float fProjSlowRadius = 400.0f;
+float fProjSlowRatio = 0.25f;
+float fProjSlowRadius = 370.0f;
 int64_t iProjSlowFrame = 60;
 float fProjSlowCost = 10.0f;
 uint32_t iProjSlowButton1 = 33;
 uint32_t iProjSlowButton2 = 33;
+float fProjWeapSpeedThres = 10.0f;
+float fProjShieldSpeedThres = 20.0f;
 
 // Enemy
 float fEnemyPushVelocityMulti = 8.0f;
@@ -50,19 +62,20 @@ float fEnemyHealthRagdollThresPer = 0.25f;
 
 // Player
 float fPlayerPushVelocityMulti = 8.0f;
-float fPlayerPushMaxDist = 60.0f;
+float fPlayerPushMaxDist = 35.0f;
 int64_t collisionEffectDurPlayerShort = 20;
 float fPlayerStaCostMin = 12.0f;
 float fPlayerStaCostMax = 40.0f;
 float fPlayerStaCostWeapMulti = 1.0f;
-float fPlayerWeaponSpeedRewardThres = 150.0f;
 float fPlayerWeaponSpeedReward = 0.35f;
-float fPlayerWeaponSpeedRewardThres2 = 30.0f;
 float fPlayerWeaponSpeedReward2 = 0.7f;
 float fPlayerStaUnableParryThresPer = 0.1f;
 float fPlayerStaStopThresPer = 0.0f;
 float fPlayerStaLargeRecoilThresPer = 0.0f;
 bool bPlayerCheckHeavyGauntlet = false;
+
+float fPlayerHealthCostMax = 20.0f;
+float fPlayerHealthCostMulti = 1.0f;
 
 // Feedback
 int64_t iTimeSlowFrameNormal = 12;
@@ -74,6 +87,7 @@ int iHapticStrMax = 50;
 float fHapticMulti = 1.0f;
 int iHapticLengthMicroSec = 100000;  // 100 ms
 bool bSparkForBeast = true; 
+bool bSparkForFistBowAndStaff = true;
 
 // Experience
 float fExpBlock = 3.0f; // At level 20, block needs [86] exp to reach 21. The number 86 increases non-linearly as the skill levels up
@@ -81,12 +95,12 @@ float fExpOneHand = 2.0f; // At level 20, one-handed needs [110] exp to reach 21
 float fExpTwoHand = 2.0f; // [179]
 float fExpHandToHand = 2.0f; // [7] in vanilla, but this number may have been changed by Hand To Hand
 
-int64_t collisionIgnoreDur = 60;
+int64_t collisionIgnoreDur = 100;
 int64_t collisionEffectDurEnemyShort = 30;  // Within 30 frames, any attack from the enemy is nullified
 int64_t collisionEffectDurEnemyLong =
     90;  // Within 90 frames, only the first attack from enemy will be nullified
          // Is there any attack animation whose start and hit will be longer than 90 frames?
-int64_t iDelayEnemyHit = 8;
+int64_t iDelayEnemyHit = 6;
 float fMagicNum1 = -0.3f;
 float fMagicNum2 = 0.0f;
 float fMagicNum3 = -4.3f;
@@ -111,6 +125,7 @@ void Settings::Load() {
     sEffectOnEnemy.Load(ini);
     sEffectOnPlayer.Load(ini);
     sExperience.Load(ini);
+    sBlock.Load(ini);
     sProjectile.Load(ini);
     sTechnique.Load(ini);
 
@@ -118,7 +133,7 @@ void Settings::Load() {
 }
 
 void Settings::Main::Load(CSimpleIniA& a_ini) { 
-    static const char* section = "Main";
+    static const char* section = "==========Main==========";
 
     detail::get_value(
         a_ini, bEnableWholeMod, section, "EnableWholeMod",
@@ -129,7 +144,17 @@ void Settings::Main::Load(CSimpleIniA& a_ini) {
 
     detail::get_value(
         a_ini, bEnableProjParry, section, "EnableProjectileParry",
-        "; Set this to false if you want to disable the parry of projectiles (arrows, firebolts). Default:\"true\".");
+        "; Set this to false if you want to disable the parry of projectiles (arrows, firebolts, etc.). More settings in \"Projectile Parry\". \n"
+        "; ===Limitation: if the shooter is too far away (like 5 floors above you), their projectile won't be detected\n"
+        "; Default:\"true\".");
+
+    
+    detail::get_value(a_ini, bEnableShieldCollision, section, "EnableShieldCollision",
+        "; Whether this mod calculates collision between player's shield and enemy's weapons/projectiles. More settings in \"Block\".\n"
+        "; ===Limitation: when you block with shield, enemy's model must be faced by the surface of shield (180 degrees range).\n"
+        "; ===Sorry for the trouble! This is not a problem most of the time, but sometimes you need to pay attention to shield's direction.\n"
+        "; ===Disabling Settings->VR->\"Realistic Shield Grip\" can almost solve this problem, if you don't mind that gripping angle.\n"
+        "; Default:\"true\"");
     
 }
 
@@ -157,8 +182,21 @@ void Settings::Difficulty::Load(CSimpleIniA& a_ini) {
 
     detail::get_value(a_ini, fProjCollisionDistThres, section, "ProjectileParryDistance",
         "; To trigger a parry to projectile (spell, arrow), how close weapon and projectile should be.\n"
-        "; Higher value means easier parry. Recommend less than 20.0 for VR players, and around 80 for "
+        "; Higher value means easier parry. Recommend less than 20.0 for VR players, and around 60 for "
         "SE and AE players. Unit: around 1.4 centimeter. Default:\"12.0\" for VR, \"60.0\" for SE/AE");
+
+    detail::get_value(a_ini, iDelayEnemyHit, section, "DelayEnemyHitOnPlayer",
+        "; This one is tricky but important to difficulty. This mod delays melee hit events from enemy to player,\n"
+        "; because in Skyrim enemies have some cheating attack animations, where they hit you a few "
+        "frames before their weapon reaches you\n"
+        "; These attack animations are unfairly hard to parry. A delay for 6 to 9 frames can fix this problem.\n"
+        "; However, if too high, player can parry an attack even if enemy's sword cut through their body a few frames ago.\n"
+        "; If you installed mod Retimed Hit Frames, I suggest you set this to 3 or 4.\n"
+        "; If you have some really good attack animation mods with precise hit frame, probably this number can be set lower.\n"
+        "; Let me know if this feature causes any trouble to other mods.\n"
+        "; Setting to 0 can disable this feature, meaning enemy hit works as vanilla game, which should "
+        "make potentially incompatible mods work well.\n"
+        "; Default:\"6\"");
 
     
     detail::get_value(
@@ -189,13 +227,17 @@ void Settings::Difficulty::Load(CSimpleIniA& a_ini) {
 void Settings::Feedback::Load(CSimpleIniA& a_ini) {
     static const char* section = "==========2. Parry Feedback==========";
 
-    detail::get_value(a_ini, iSparkSpawn, section, "SpawnSparkFrame",
-        "; For how many frames after collision do we continue to spawn additional sparks (collision itself spawns 1 spark). \n"
+    detail::get_value(a_ini, iSparkSpawn, section, "SpawnExtraSparkFrame",
+        "; For how many frames after collision do we continue to spawn extra sparks (collision itself spawns 1 spark). \n"
         "; Spark is spawned every 6 frames. So a number 12 means spawning 2 sparks after parry (3 sparks in total). \n"
-        "; If you use vanilla spark, 12 is probably good. If you use mods offering big, bright spark, change this to 6 or even 0. Default:\"6\"");
+        "; If you use mods offering big and bright sparks, use 6 or even 0 (0 still has 1 spark). Default:\"6\"");
 
     detail::get_value(a_ini, bSparkForBeast, section, "SparkForBeast",
-        "; If this is false, there won't be spark if player is beast (like werewolf) or enemy is beast. Default:\"true\"");
+        "; If this is false, there won't be spark if enemy is beast or player is beast (like werewolf). Default:\"true\"");
+
+    detail::get_value(a_ini, bSparkForFistBowAndStaff, section, "SparkForFistBowAndStaff",
+        "; If this is false, there won't be spark if player is using fists, bow or staff to parry. "
+        "Default:\"true\"");
 
     detail::get_value(
         a_ini, fHapticMulti, section, "HapticStrengthMultiplier",
@@ -236,7 +278,7 @@ void Settings::EffectOnEnemy::Load(CSimpleIniA& a_ini) {
 
     detail::get_value(
         a_ini, fEnemyPushVelocityMulti, section, "EnemyPushSpeedMulti",
-        ";======[3.1] Hit effects on enemy\n"
+        ";======[3.1] Hit pushback on enemy\n"
         ";\n"
         "; After a parry, this value controls how fast the enemy should be pushed away. This creates a little juice as parry feedback\n"
         "; Higher value means pushing faster farther. A value below 8.0 is often effectless. Default:\"8.0\"");
@@ -310,12 +352,26 @@ void Settings::EffectOnPlayer::Load(CSimpleIniA& a_ini) {
     static const char* section = "==========4. Parry Effect on Player==========";
 
     detail::get_value(
-        a_ini, bPlayerCheckHeavyGauntlet, section, "HandToHandPlayerMustWearHeavyArmor",
-        "; If this is false, whenever player wields two unarmed hands, they can parry with hands.\n"
-        "; If this is true, when player wields two unarmed hands, they must wear heavy armor to be able to parry. Default:\"false\"");
+        a_ini, fPlayerHealthCostMulti, section, "PlayerHealthCostMulti",
+        ";=========ATTENTION! [4.1] is new in Version 1.0.0\n"
+        ";\n"
+        ";======[4.1] Damage if holding weapon still\n"
+        "; Many players complain this mod makes their combat too easy, so now we have this new section.\n"
+        "; If you don't like it, set PlayerHealthCostMulti to 0.0\n"
+        ";\n"
+        "; If player's weapon speed is lower than EnemyStopVelocityThreshold, they get damage and their stamina is reduced a lot (see [4.3]).\n"
+        "; The damage depends on enemy's weapon, skill, power attack, player's armor rate, player's Block skill.\n"
+        "; The damage also depends on player's weapon speed. When speed equals to or above EnemyStopVelocityThreshold, damage is 0.\n"
+        "; The damage is also multiplied by PlayerHealthCostMulti.\n"
+        "; Higher value means higher damage and more challenging. Default:\"1.0\"");
+
+    detail::get_value(
+        a_ini, fPlayerHealthCostMax, section, "PlayerHealthCostMax",
+        "; The damage to player is capped by PlayerHealthCostMax. Default:\"20.0\"");
+
 
     detail::get_value(a_ini, fPlayerPushVelocityMulti, section, "PlayerPushSpeedMulti",
-        ";======[4.1] Hit effect on player\n"
+        ";======[4.2] Hit pushback on player\n"
         ";\n"
         "; After a parry, this value controls how fast the player should be pushed away. This creates a "
         "little juice as parry feedback\n"
@@ -324,11 +380,17 @@ void Settings::EffectOnPlayer::Load(CSimpleIniA& a_ini) {
     detail::get_value(a_ini, fPlayerPushMaxDist, section, "PlayerPushDistance",
         "; After a parry, the max distance the player may be pushed away\n"
         "; The actual distance is decreased by the speed of you weapon. You can avoid being pushed by swinging weapon during parry\n"
-        "; Higher value means pushing farther. Unit:~ 1.4 cm. Default:\"35.0\" for SE/AE, \"60.0\" for VR");
+        "; Higher value means pushing farther. Unit:~ 1.4 cm. Default:\"35.0\"");
+
+    
+    detail::get_value(a_ini, bPlayerCheckHeavyGauntlet, section, "HandToHandPlayerMustWearHeavyArmor",
+                      "; If this is false, whenever player wields two unarmed hands, they can parry with hands.\n"
+                      "; If this is true, when player wields two unarmed hands, they must wear heavy armor to be able "
+                      "to parry. Default:\"false\"");
 
     detail::get_value(
         a_ini, fPlayerStaCostWeapMulti, section, "PlayerStaminaCostMultiplier",
-        ";======[4.2] Stamina cost to player\n"
+        ";======[4.3] Stamina cost to player\n"
         ";\n"
         "; Stamina_cost_to_player = PlayerStaminaCostMultiplier * (enemy_weapon_damage * "
         "enemy_related_skill * 2.0 - player_weapon_damage * player_related_skill)\n"
@@ -346,32 +408,26 @@ void Settings::EffectOnPlayer::Load(CSimpleIniA& a_ini) {
     detail::get_value(a_ini, fPlayerStaCostMax, section, "PlayerMaxStaminaCost",
                       "; The maximal stamina cost to the player for each parry. Default:\"20.0\" for SE/AE, \"40.0\" for VR");
 
-    detail::get_value(
-        a_ini, fPlayerWeaponSpeedRewardThres, section, "PlayerWeaponSpeedRewardThreshold1",
-        ";======[4.3] Weapon speed reward VR\n"
-        ";\n"
-        "; === If you are a SE/AE player, no need to read the four settings below.\n"
-        "; Because SE/AE don't have controller, so stamina cost is already reduced for SE/AE players, and settings below are turned off\n"
-        "; === If you are a VR player, your base stamina cost is higher, but when you move weapon at some speed when parry, you can reduce the stamina cost\n"
-        "; Stamina_cost_to_player is multiplied by PlayerWeaponSpeedReward1, if your weapon speed is higher than PlayerWeaponSpeedRewardThreshold1\n"
-        "; If not passing Threshold1, Stamina_cost_to_player is multiplied by PlayerWeaponSpeedReward2, if your weapon speed is higher than PlayerWeaponSpeedRewardThreshold2\n"
-        ";\n"
-        "; When player is swinging their weapon pretty fast, they reduce their stamina cost by a lot.\n"
-        "; \"150.0\" is about swinging your controller to attack. Unit:~ 1.5 cm per second. Default:\"150.0\"");
 
     detail::get_value(a_ini, fPlayerWeaponSpeedReward, section, "PlayerWeaponSpeedReward1",
-        "; The Stamina_cost_to_player is multiplied by this value, if passing PlayerWeaponSpeedRewardThreshold1.\n"
+        ";======[4.4] Stamina cost reduced when weapon speed is high (VR)\n"
+        ";\n"
+        "; === If you are a SE/AE player, no need to read the four settings below.\n"
+        "; Because SE/AE don't have VR controller, so stamina cost is already reduced for SE/AE players, and settings "
+        "below are turned off\n"
+        "; === If you are a VR player, your base stamina cost is higher, but when you move weapon at some speed when "
+        "parry, you can reduce the stamina cost\n"
+        "; Stamina_cost_to_player is multiplied by PlayerWeaponSpeedReward1, if your weapon speed is higher than "
+        "EnemyStaggerVelocityThreshold\n"
+        "; If not passing EnemyStaggerVelocityThreshold, Stamina_cost_to_player is multiplied by PlayerWeaponSpeedReward2, if your weapon "
+        "speed is higher than EnemyStopVelocityThreshold\n"
+        ";\n"
+        "; When player is swinging their weapon pretty fast, they reduce their stamina cost by a lot. See formula above\n"
         "; \"0.35\" means the stamina cost is reduced by 65%. Default:\"0.35\"");
 
     detail::get_value(
-        a_ini, fPlayerWeaponSpeedRewardThres2, section, "PlayerWeaponSpeedRewardThreshold2",
-        "; This takes effect when PlayerWeaponSpeedRewardThreshold1 is not passed."
-        "; When player is at least moving their weapon instead of holding it still, they reduce their stamina cost.\n"
-        "; \"30.0\" is very easy to pass. Unit:~ 1.5 cm per second. Default:\"30.0\"");
-
-    detail::get_value(
         a_ini, fPlayerWeaponSpeedReward2, section, "PlayerWeaponSpeedReward2",
-        "; The Stamina_cost_to_player is multiplied by this value, if passing PlayerWeaponSpeedRewardThreshold2.\n"
+        "; When player is at least moving their weapon instead of holding it still, they reduce their stamina cost. See formula above\n"
         "; \"0.70\" means the stamina cost is reduced by 30%. Default:\"0.70\"");
 }
 
@@ -379,52 +435,112 @@ void Settings::Experience::Load(CSimpleIniA& a_ini) {
     static const char* section = "==========5. Player Experience Gain==========";
 
     detail::get_value(a_ini, fExpBlock, section, "BlockExperienceGain",
-                      "; Each collision gives player this amount of block experience. Default:\"3.0\"");
+                      "; Each block with shield (in this mod) gives player this amount of block experience. Default:\"3.0\"");
     detail::get_value(a_ini, fExpOneHand, section, "OneHandedExperienceGain",
-                      "; Each collision gives player this amount of one-handed experience, if parrying with one-handed weapon. Default:\"2.0\"");
+                      "; Each parry gives player this amount of one-handed experience, if parrying with one-handed weapon. Default:\"2.0\"");
     detail::get_value(a_ini, fExpTwoHand, section, "TwoHandedExperienceGain",
-                      "; Each collision gives player this amount of two-handed experience, if parrying with two-handed weapon. Default:\"2.0\"");
+                      "; Each parry gives player this amount of two-handed experience, if parrying with two-handed weapon. Default:\"2.0\"");
     detail::get_value(a_ini, fExpHandToHand, section, "HandToHandExperienceGain",
                       "; If Hand to Hand - An Adamant Addon and Adamant are installed, and player is parrying with fists\n"
         "; (VR players should install Hand to Hand - An Adamant VR Addon and the base mod) \n"
-        "; Each collision gives player this amount of hand-to-hand experience. Default:\"2.0\"");
+        "; Each parry gives player this amount of hand-to-hand experience. Default:\"2.0\"");
+}
+
+void Settings::Block::Load(CSimpleIniA& a_ini) {
+    static const char* section = "==========6. Block==========";
+
+
+    detail::get_value(a_ini, fShieldRadius, section, "ShieldRadius",
+        "; Radius of shield's collision. In this mod, all shields are treated as a plate, sharing the same radius.\n"
+        "; If you feel the collision doesn't match the shield's model, adjust this. Default:\"33.0\"");
+
+    detail::get_value(
+        a_ini, iFrameBlockDur, section, "BlockDurationFrame",
+        "; When enemy's weapon touches player's shield, player will start blocking pose for a few frames and stop.\n"
+        "; This is the number of frames. If this value is too high, player will be stuck in blocking pose for longer.\n"
+        "; If you ever get stuck in blocking pose, you can jump to stop it. Welcome to report a bug to me!\n"
+        "; Default:\"30\"");
+
+    detail::get_value(
+        a_ini, bPressButtonToBlock, section, "PressButtonToBlock",
+        "; ==== If you use any timed-block mods like SOSCBO or Deflection, you may want to read this\n"
+        "; When this is false, this mod makes you block enemy's attack if your shield collides with enemy's weapon.\n"
+        "; When this is true, this mod checks both the collision and whether you are holding BlockButton.\n"
+        "; This feature is designed for those timed-block mods. After enable this, there are 4 cases:\n"
+        "; (1) To have a timed-block, you need to press the button right before hit and \n"
+        "; also make your shield collide with enemy's weapon. The exact timing is decided by those mods.\n"
+        "; (2) If you hold the button long before hit, those timed-block mods won't consider this as a timed-block\n"
+        "; (3) If you hold the button but doesn't make shield collide with enemy's weapon, the block won't happen\n"
+        "; (4) If you make shield collide with enemy's weapon but don't hold the button, the block won't happen (there will be spark but it's just visual effect)\n"
+        "; IMO, this makes the blocking more challenging and fun with SOSCBO or Deflection. \n"
+        "; If you don't enable this, those mods will treat almost every block as a timed-block\n"
+        "; My settings in SOSCBO: Timed-block cooldown: 0.00 sec (important)\n"
+        ";      Timed-block window: 0.15 sec (yes, now you can use a very low value because block "
+        "with this mod feels more accurate)\n"
+        "; Default:\"false\"");
+
+    detail::get_value(
+        a_ini, iBlockButton, section, "BlockButton",
+        "; ==== If you use any timed-block mods like SOSCBO or Deflection, you may want to set this\n"
+        "; When PressButtonToBlock is true, this is the code of that block button. 2 is grip, 33 is trigger. Both hands are detected\n"
+        "; If prefer other buttons, you can find button code by this mod. See instructions below ProjectileSlowButton1\n"
+        "; Default:\"33\"");
+
+    detail::get_value(
+        a_ini, fOriginCone, section, "Origin_fCombatHitConeAngle",
+        "; ==== Most players can ignore this one\n"
+        "; When this mod makes player block, it also changes fCombatHitConeAngle to 180.0\n"
+        "; fCombatHitConeAngle is a hidden setting in Skyrim. Two actors' facing angle must be smaller than this to trigger block.\n"
+        "; To make player block more freely, this mod needs to set fCombatHitConeAngle to 180.0 \n"
+        "; When player exits combat, this mod will set fCombatHitConeAngle to Origin_fCombatHitConeAngle \n"
+        "; Default:\"35.0\"");
 }
 
 
 void Settings::Projectile::Load(CSimpleIniA& a_ini) {
-    static const char* section = "==========6. Projectile Parry==========";
+    static const char* section = "==========7. Projectile Parry==========";
 
     
     detail::get_value(a_ini, fProjLength, section, "ProjectileLength",
-        "; The length of each projectile. Higher value means easier parry. Default:\"50.0\"");
+        "; The length of each projectile (including arrow, fireball, icespike, spiderweb, etc.) \n"
+        "; BTW, parried arrows can't be picked up, to prevent a CTD bug\n"
+        "; Higher value means easier parry. Default:\"50.0\"");
 
     detail::get_value(a_ini, iProjCollisionFrame, section, "ProjectileParryFrame",
         "; When calculating the parry of projectile, this mod also considers player's weapon position in "
         "the last ProjectileParryFrame frames.\n"
-        "; This enables you to parry like how Jedi deflects blaster shots by swinging lightsaber. \n"
+        "; This makes parry more smooth, and also enables you to parry like how Jedi deflects blaster shots by swinging lightsaber. \n"
         "; Higher value means easier parry, but don't make it too high. Default:\"5\"");
 
+    detail::get_value(a_ini, fProjWeapSpeedThres, section, "ProjectileParryWeaponMinSpeed",
+         "; To be able to parry projectiles, weapon's speed must be higher than this. \n"
+        "; 10.0 is really easy to achieve. Default:\"10.0\"");
+
+    detail::get_value(a_ini, fProjShieldSpeedThres, section, "ProjectileParryShieldMinSpeed",
+            "; To be able to parry projectiles, shield's speed must be higher than this. \n"
+            "; I set this higher than weapon's because it's really easy to pary with shield (its collision is so big). Default:\"20.0\"");
+
     detail::get_value(a_ini, fProjSlowRadius, section, "ProjectileSlowRadius",
-        "; You can SLOW DOWN projectiles like Neo in The Matrix using your magicka!!!"
+        "; ==== You can SLOW DOWN projectiles like Neo in The Matrix, at the cost of some magicka!!!\n"
         "; A projectile will be slowed down for a few frames if:\n"
-        "; (1) Player has more than SlowMagickaCost\n"
-        "; (2) Player is pressing the trigger on VR controller\n"
+        "; (1) Player's magicka is more than SlowMagickaCost\n"
+        "; (2) Player is pressing the trigger on VR controller (either one is OK)\n"
         "; \n"
         "; \n"
-        "; This is the radius of the slow down effect. Don't recommend too large or too small values. Default:\"250.0\"");
+        "; This is the radius of the slow down effect. Don't recommend too large or too small values. Default:\"370.0\"");
 
     detail::get_value(a_ini, iProjSlowButton1, section, "ProjectileSlowButton1",
-        "; The code of the button you need to press to slow projectiles. For VR, 33 is the trigger button. \n"
+        "; The code of the button you need to press to slow projectiles. For VR, 33 is the trigger button, and 2 is grip. \n"
         "; For SE/AE, 4096 is A on Xbox controller, and 18 is E on keyboard. \n"
         "; If those values don't work for you, you can find the code of the button you want by these steps:\n"
-        "; (1) Set TraceLevel to 0; (2) Open the trace file (location is in TraceLevel section) when you play\n"
+        "; (1) Set TraceLevel to 0; (2) Open the trace (C:\\Users\\XXX\\Documents\\My Games\\Skyrim VR\\SKSE\\WeaponCollision.log) when you play\n"
         "; (3) Hold the button you want during combat; (4) In the trace file, you will see a lot of \"... Pressed key XXX\"\n"
-        "; (5) Come back here, set ProjectileSlowButton to the XXX you see, save edits"
+        "; (5) Come back here, set ProjectileSlowButton to the XXX you see, save edits\n"
         "; Default:\"33\" for VR, \"18\" for SE/AE");
 
     detail::get_value(
         a_ini, iProjSlowButton2, section, "ProjectileSlowButton2",
-        "; Another button you can press to slow projectiles.  Default:\"33\" for VR, \"4096\" for SE/AE");
+        "; Another button you can press to slow projectiles. This is mainly for SE/AE.  Default:\"33\" for VR, \"4096\" for SE/AE");
 
     detail::get_value(a_ini, fProjSlowCost, section, "ProjectileSlowMagickaCost",
         "; The magicka cost to slow down the projectile.\n"
@@ -432,7 +548,7 @@ void Settings::Projectile::Load(CSimpleIniA& a_ini) {
 
     detail::get_value(a_ini, fProjSlowRatio, section, "ProjectileSlowRatio",
         "; When slowed down, projectile_new_speed = projectile_original_speed * ProjectileSlowRatio.\n"
-        "; Lower value means slower speed. Default:\"0.17\"");
+        "; Lower value means slower speed. Default:\"0.25\"");
 
     detail::get_value(a_ini, iProjSlowFrame, section, "ProjectileSlowFrame",
         "; How many frames will the projectile be slowed.\n"
@@ -457,13 +573,18 @@ void Settings::Technique::Load(CSimpleIniA& a_ini) {
         "; We only calculate weapon collisions between player and enemies in this range, for optimization.\n"
         "; Unit:~ 1.5 cm. Default:\"600.0\"");
 
+    detail::get_value(
+        a_ini, fProjDetectRange, section, "ProjectileDetectionRange",
+        "; We only calculate projectile parry in this range. Due to some unknown bugs, if this is too small\n"
+        "; some projectiles won't be detected even if they are right at your face. Unit:~ 1.5 cm. Default:\"800.0\"");
+
     detail::get_value(a_ini, bShowPlayerWeaponSegment, section, "DebugShowPlayerWeaponRange",
-        "; Display some effect on the two ends of player's weapons.\n"
-                      "; I turn this on to verify if the weapon length used by this mod is correct. Default:\"false\"");
+        "; Display some effect on the two ends of player's weapons (for shield, also the normalized verticle vector).\n"
+        "; I turn this on to verify if the weapon length used by this mod is correct. Default:\"false\"");
     
     detail::get_value(a_ini, bShowEnemyWeaponSegment, section, "DebugShowEnemyWeaponRange",
-                      "; Display some effect on the two ends of enemy's weapons.\n"
-                      "; I turn this on to verify if the weapon length used by this mod is correct. Default:\"false\"");
+        "; Display some effect on the two ends of enemy's weapons.\n"
+        "; I turn this on to verify if the weapon length used by this mod is correct. Default:\"false\"");
 
     //detail::get_value(
     //    a_ini, fMagicNum1, section, "DebugTuneAngle1",
@@ -481,7 +602,7 @@ void Settings::Technique::Load(CSimpleIniA& a_ini) {
     detail::get_value(
         a_ini, collisionIgnoreDur, section, "collisionIgnoreDur",
         "; After a collision, for how many frames should we ignore following collisions of the same enemy.\n"
-        "; A value too low creates lots of collision for each parry. Default:\"60\"");
+        "; A value too low creates lots of collision for each parry. Default:\"100\"");
 
     detail::get_value(
         a_ini, collisionEffectDurEnemyShort, section, "NullifyEnemyAllAttackFrames",
@@ -503,14 +624,7 @@ void Settings::Technique::Load(CSimpleIniA& a_ini) {
     //    "; If you set EnableWeaponCollision to be 0 in higgs_vr.ini on purpose, you may want to set this to false.\n"
     //    "; Otherwise, please leave this to be true, since this can make projectiles parry less buggy. Default:\"true\"");
 
-    detail::get_value(
-        a_ini, iDelayEnemyHit, section, "DelayEnemyHitOnPlayer",
-        "; This one is tricky but important. This mod delays melee hit events from enemy to player,\n"
-        "; because in Skyrim enemies have some cheating attack animations, where they hit you a few frames before their weapon reaches you\n"
-        "; These attack animations are unfairly hard to parry. A delay for about 6 to 9 frames is nearly unnoticeable and fixes this problem.\n"
-        "; If your framerate is below 60fps, set it to 5 or so. Let me know if this feature causes any trouble to other mods.\n"
-         "; Setting to 0 can disable this feature, meaning enemy hit works as vanilla game, which should make potentially incompatible mods work well.\n"
-        "; Default:\"8\"");
+
 }
     
 spdlog::level::level_enum TraceLevel(int level) {

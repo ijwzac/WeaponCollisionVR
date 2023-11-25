@@ -5,6 +5,74 @@
 using namespace SKSE;
 using namespace SKSE::log;
 
+// This function only fires once per 20 seconds
+void SetCone(float newConeAngle) {
+    if (iFrameSetCone != 0 && iFrameCount - iFrameSetCone < 90 * 20) return;
+
+    iFrameSetCone = iFrameCount;
+
+    ForceSetCone(newConeAngle);
+}
+
+// This function fires no matter what
+void ForceSetCone(float newConeAngle) { 
+    auto papyrusVM = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+    if (papyrusVM) {
+        if (papyrusVM->TypeIsValid("Game"sv)) {
+            RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> callback1;
+            RE::BSScript::IFunctionArguments* coneArgs;
+            coneArgs = RE::MakeFunctionArguments("fCombatHitConeAngle"sv, (float)newConeAngle);
+
+            log::debug("Using Papyrus to set fCombatHitConeAngle to {}", newConeAngle);
+
+            papyrusVM->DispatchStaticCall("Game"sv, "SetGameSettingFloat"sv, coneArgs, callback1);
+
+        }
+    }
+}
+
+bool HasShield(RE::Actor* actor) {
+    if (auto equipL = actor->GetEquippedObject(true); equipL) {
+        if (equipL->IsArmor()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+
+// If something goes wrong, return false
+bool IsFriend(RE::Actor* actor1, RE::Actor* actor2){
+    bool result = false;
+
+    if (!actor1 || !actor2) {
+        log::trace("Null actor(s) passed to IsFriend()");
+        return result;
+    }
+
+    auto actorNPC1 = actor1->GetActorBase();
+    auto actorNPC2 = actor2->GetActorBase();
+
+    if (!actorNPC1 || !actorNPC2) {
+        log::trace("Actor(s) in IsFriend() has null GetActorBase()");
+        return result;
+    }
+
+
+    auto relationship = RE::BGSRelationship::GetRelationship(actorNPC1, actorNPC2);
+
+    if (!relationship) {
+        log::trace("Get null relationship");
+        return result;
+    }
+
+    if (relationship->level <= RE::BGSRelationship::RELATIONSHIP_LEVEL::kFriend) {
+        return true;
+    } else {
+        return false;
+    }
+}
+
 //void DisableHiggsWeapCol() {
 //    if (iFrameCount - iFrameDisableHiggs > 90 || iFrameCount - iFrameDisableHiggs < 0) {
 //        iFrameDisableHiggs = iFrameCount;
@@ -345,7 +413,7 @@ RE::NiNode* HandleDwenmerSphere(RE::Actor* actor, RE::NiPoint3& posWeaponBottomL
 
     const auto actorRoot = netimmerse_cast<RE::BSFadeNode*>(actor->Get3D());
     if (!actorRoot) {
-        log::warn("Fail to find actor:{}", actor->GetBaseObject()->GetName());
+        log::warn("Fail to get actorRoot:{}", actor->GetBaseObject()->GetName());
         return nullptr;
     }
 
@@ -393,7 +461,7 @@ RE::NiNode* HandleMouthRace(RE::Actor* actor, RE::NiPoint3& posWeaponBottomL, RE
 
     const auto actorRoot = netimmerse_cast<RE::BSFadeNode*>(actor->Get3D());
     if (!actorRoot) {
-        log::warn("Fail to find actor:{}", actor->GetBaseObject()->GetName());
+        log::warn("Fail to get actorRoot:{}", actor->GetBaseObject()->GetName());
         return nullptr;
     }
 
@@ -446,7 +514,7 @@ twoNodes HandleClawRaces(RE::Actor* actor, RE::NiPoint3& posWeaponBottomL, RE::N
 
     const auto actorRoot = netimmerse_cast<RE::BSFadeNode*>(actor->Get3D());
     if (!actorRoot) {
-        log::warn("Fail to find actor:{}", actor->GetBaseObject()->GetName());
+        log::warn("Fail to get actorRoot:{}", actor->GetBaseObject()->GetName());
         return twoNodes(nullptr, nullptr);
     }
 
@@ -521,7 +589,7 @@ twoNodes HandleClawAndHeadRaces(RE::Actor* actor, RE::NiPoint3& posWeaponBottomL
 
     const auto actorRoot = netimmerse_cast<RE::BSFadeNode*>(actor->Get3D());
     if (!actorRoot) {
-        log::warn("Fail to find actor:{}", actor->GetBaseObject()->GetName());
+        log::warn("Fail to get actorRoot:{}", actor->GetBaseObject()->GetName());
         return twoNodes(nullptr, nullptr);
     }
 
@@ -579,7 +647,7 @@ twoNodes HandleFrostSpider(RE::Actor* actor, RE::NiPoint3& posWeaponBottomL, RE:
 
     const auto actorRoot = netimmerse_cast<RE::BSFadeNode*>(actor->Get3D());
     if (!actorRoot) {
-        log::warn("Fail to find actor:{}", actor->GetBaseObject()->GetName());
+        log::warn("Fail to get actorRoot:{}", actor->GetBaseObject()->GetName());
         return twoNodes(nullptr, nullptr);
     }
 
@@ -643,7 +711,7 @@ twoNodes HandleDwenmerSpider(RE::Actor* actor, RE::NiPoint3& posWeaponBottomL, R
 
     const auto actorRoot = netimmerse_cast<RE::BSFadeNode*>(actor->Get3D());
     if (!actorRoot) {
-        log::warn("Fail to find actor:{}", actor->GetBaseObject()->GetName());
+        log::warn("Fail to get actorRoot:{}", actor->GetBaseObject()->GetName());
         return twoNodes(nullptr, nullptr);
     }
 
@@ -836,6 +904,51 @@ void RecoilEffect(RE::Actor* actor, int strength) {
 }
 
 RE::Projectile::LaunchData::~LaunchData() = default;
+
+void vibrateController(int hapticFrame, bool isLeft) {
+    auto papyrusVM = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+
+    if (papyrusVM) {
+        hapticFrame = hapticFrame < iHapticStrMin ? iHapticStrMin : hapticFrame;
+        hapticFrame = hapticFrame > iHapticStrMax ? iHapticStrMax : hapticFrame;
+
+        RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> callback;
+
+        log::trace("Calling papyrus");
+        if (papyrusVM->TypeIsValid("VRIK"sv)) {
+            log::trace("VRIK is installed");
+            RE::BSScript::IFunctionArguments* hapticArgs;
+            if (isLeft) {
+                hapticArgs = RE::MakeFunctionArguments(true, (int)hapticFrame, (int)iHapticLengthMicroSec);
+            } else {
+                hapticArgs = RE::MakeFunctionArguments(false, (int)hapticFrame, (int)iHapticLengthMicroSec);
+            }
+            // Function VrikHapticPulse(Bool onLeftHand, Int frames, Int microsec) native global
+            papyrusVM->DispatchStaticCall("VRIK"sv, "VrikHapticPulse"sv, hapticArgs, callback);
+        } else {
+            log::trace("VRIK not installed");
+            // Now we call vanilla's script Game.ShakeController(float afLeftStrength, float afRightStrength, float
+            // afDuration) afLeftStrength: The strength of the left motor. Clamped from 0 to 1. afRightStrength: The
+            // strength of the right motor.Clamped from 0 to 1. afDuration : How long to shake the controller - in
+            // seconds.
+            if (papyrusVM->TypeIsValid("Game"sv)) {
+                RE::BSScript::IFunctionArguments* hapticArgs;
+                if (isLeft) {
+                    hapticArgs = RE::MakeFunctionArguments(((float)hapticFrame) / ((float)iHapticStrMax), 0.0f,
+                                                           (float)iHapticLengthMicroSec / 1000000);
+                } else {
+                    hapticArgs = RE::MakeFunctionArguments(0.0f, ((float)hapticFrame) / ((float)iHapticStrMax),
+                                                           (float)iHapticLengthMicroSec / 1000000);
+                }
+                papyrusVM->DispatchStaticCall("Game"sv, "ShakeController"sv, hapticArgs, callback);
+            } else {
+                log::trace("Failed to find vanilla Game script");
+            }
+        }
+
+        log::trace("Finished calling papyrus");
+    }
+}
 
 // Deprecated: Not working
 // Many code learnt from https://github.com/TESRSkywind/SkywindProjectiles

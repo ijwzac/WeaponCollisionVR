@@ -118,6 +118,28 @@ void ZacOnFrame::CollisionDetection() {
         StopTimeSlowEffect(playerActor);
     }
 
+    if (iFrameCount >= iFrameStopBlock && iFrameStopBlock != 0 && playerActor->IsBlocking()) {
+        iFrameStopBlock = 0;
+        playerActor->NotifyAnimationGraph("blockStop"sv);
+        playerActor->SetGraphVariableBool("IsBlocking"sv, false);
+    } else if (iFrameStopBlock != 0) {
+        playerActor->SetGraphVariableBool("IsBlocking"sv, true);
+    }
+
+    if (bPressButtonToBlock && HasShield(playerActor) && bEnableShieldCollision) {
+        if (iFramePressBlockButton > 0 && iFrameCount - iFramePressBlockButton >= 0 &&
+            iFrameCount - iFramePressBlockButton < 3) {
+            if (!playerActor->IsBlocking()) {
+                playerActor->NotifyAnimationGraph("blockStart"sv);
+                playerActor->SetGraphVariableBool("IsBlocking"sv, true);
+            }
+        } else if (iFrameCount - iFramePressBlockButton > 30 && playerActor->IsBlocking()) {
+            iFrameStopBlock = 0;
+            playerActor->NotifyAnimationGraph("blockStop"sv);
+            playerActor->SetGraphVariableBool("IsBlocking"sv, false);
+        }
+    }
+    
 
     // See if we need to fire a delayed melee event
     // log::trace("About to check meleeQueue");
@@ -125,13 +147,42 @@ void ZacOnFrame::CollisionDetection() {
     while (lastMeleeHit) {
         lastMeleeHit->shouldHitFrame = -1;  // this doesn't delete it, but won't be used and will eventually be cleared
         log::trace("Handling a delayed hit");
+
         if (lastMeleeHit->hit_causer) {
-            auto col = colBuffer.GetThisEnemyLatestCollision(lastMeleeHit->hit_causer);
-            if ((col && !col->shouldNullifyEnemyCurretHit()) || col == nullptr) {
-                log::trace("A delayed hit is fired");
+
+            if (playerActor->IsBlocking()) {
+                log::trace("Player is now blocking");
+                if (bPressButtonToBlock) {
+                    // With this option, player needs to be both holding button and have recent collision to block the enemy
+                    bool canBlock = false;
+                    if (iFramePressBlockButton > 0 && iFrameCount - iFramePressBlockButton >= 0 &&
+                        iFrameCount - iFramePressBlockButton < 3) {
+                        Collision* recentCol = colBuffer.GetThisEnemyLatestCollision(lastMeleeHit->hit_causer);
+                        if (recentCol && recentCol->shouldNullifyEnemyCurretHit()) {
+                            canBlock = true;
+                        }
+                    }
+                    if (!canBlock) {
+                        playerActor->NotifyAnimationGraph("blockStop"sv);
+                        playerActor->SetGraphVariableBool("IsBlocking"sv, false);
+                    }
+                }
+
                 OnMeleeHit::OnMeleeHitHook::GetSingleton().FireOriMeleeHit(
                     lastMeleeHit->hit_causer, lastMeleeHit->hit_target, lastMeleeHit->a_int1, lastMeleeHit->a_bool,
                     lastMeleeHit->a_unkptr);
+                
+
+            } else {
+
+                // Handling normal parried or non-parried hits
+                auto col = colBuffer.GetThisEnemyLatestCollision(lastMeleeHit->hit_causer);
+                if ((col && !col->shouldNullifyEnemyCurretHit()) || col == nullptr) {
+                    log::trace("A delayed hit is firing and player not blocking using our mod");
+                    OnMeleeHit::OnMeleeHitHook::GetSingleton().FireOriMeleeHit(
+                        lastMeleeHit->hit_causer, lastMeleeHit->hit_target, lastMeleeHit->a_int1, lastMeleeHit->a_bool,
+                        lastMeleeHit->a_unkptr);
+                }
             }
         }
         lastMeleeHit = meleeQueue.GetMatchOriMelee(iFrameCount);
@@ -148,11 +199,19 @@ void ZacOnFrame::CollisionDetection() {
     
     if (!playerActor->IsInCombat()) {  // Note: Combat state is not related to whether player sheathe weapons
         log::trace("Player not in combat");
+        // when player not in combat, reset fCombatHitConeAngle back to fOriginCone, which is now fixed 35.0f
+        if (iFrameSetCone != 0 && !playerActor->IsInCombat()) {
+            log::debug("Reset fCombatHitConeAngle to:{}", fOriginCone);
+            ForceSetCone(fOriginCone);
+            iFrameSetCone = 0;
+        }
         return;
     }
     
     // Get player's weapons
     bool isPlayerUsingClaw = false;
+
+    bDisableSpark = false;
     if (GetSpecialRace(playerActor) == 3) isPlayerUsingClaw = true;
     RE::NiPoint3 posWeaponBottomL, posWeaponBottomR, posWeaponTopL, posWeaponTopR;
     if (!FrameGetWeaponPos(playerActor, posWeaponBottomL, posWeaponBottomR, posWeaponTopL, posWeaponTopR, true)) {
@@ -173,11 +232,18 @@ void ZacOnFrame::CollisionDetection() {
     RE::NiPoint3 leftSpeed = speedBuf.GetVelocity(5, true);
     RE::NiPoint3 rightSpeed = speedBuf.GetVelocity(5, false);
 
-    
-    if (playerActor->IsBlocking()) {
-        log::trace("Player is blocking");
-        return;
+    RE::NiPoint3 shieldCenter, shieldNormal; // normal is the normalized vector vertical to shield, pointing outwards
+    bool isUsingShield = false;
+    if (HasShield(playerActor) && bEnableShieldCollision) {
+        isUsingShield = true;
+        FillShieldCenterNormal(playerActor, shieldCenter, shieldNormal);
     }
+    
+    // Deprecated: now we don't care if player is blocking, since our mod may make player enter blocking
+    //if (playerActor->IsBlocking()) {
+    //    log::trace("Player is blocking");
+    //    return;
+    //}
 
     // If bPlayerMustBeAttacking is true, which is default true for SE/AE, and default false for VR
     // Then we return here, because player must be attacking to parry
@@ -275,6 +341,13 @@ void ZacOnFrame::CollisionDetection() {
             continue;
         }
 
+        // Check if it's close enough
+        auto distProjPlayer = proj->GetPosition().GetDistance(playerActor->GetPosition());
+        /*if (distProjPlayer > 350.0f) {
+            log::trace("Too far away projectile. Dist:{}. Name:{}. Speed:{}. Pos:{},{},{}", distProjPlayer, proj->GetName(), velocity.Length(),
+                       proj->GetPositionX(), proj->GetPositionY(), proj->GetPositionZ());
+        }*/
+
         // Check if the projectile already triggered impact
         int countImpact = 0;
         for (auto impactIter = projRuntime.impacts.begin(); impactIter != projRuntime.impacts.end(); ++impactIter) {
@@ -296,6 +369,14 @@ void ZacOnFrame::CollisionDetection() {
         if (!caster || caster == playerActor) {
             log::trace("Asprojectile without caster or caster is player. Name:{}. Pos:{},{},{}", proj->GetName(),
                        proj->GetPositionX(), proj->GetPositionY(), proj->GetPositionZ());
+            continue;
+        }
+
+        // Check if it comes from a friend
+        auto casterActor = static_cast<RE::Actor*>(caster);
+        if (IsFriend(casterActor, playerActor)) {
+            log::debug("Projectile comes from a friend.Name:{}. Pos:{},{},{}", proj->GetName(), proj->GetPositionX(),
+                       proj->GetPositionY(), proj->GetPositionZ());
             continue;
         }
 
@@ -329,7 +410,6 @@ void ZacOnFrame::CollisionDetection() {
         // Option 3:
         // When the player is pressing the trigger, slow the projectile down
         auto inputManager = RE::BSInputDeviceManager::GetSingleton();
-        auto distProjPlayer = proj->GetPosition().GetDistance(playerActor->GetPosition());
         log::trace("isSlowed:{}, distProjPlayer:{}, inputManager valid:{}", isSlowed, distProjPlayer,
                    inputManager != nullptr);
         if (!isSlowed && distProjPlayer < fProjSlowRadius &&
@@ -413,8 +493,24 @@ void ZacOnFrame::CollisionDetection() {
         // See if player successfully parries it
         // Missiles or not slowed can have easier parry, since they may explode on player's weapon is Higgs is installed
         if (!bAbleToParry) continue;
+
+        auto speedL = speedBuf.GetVelocity(5, true).SqrLength();
+        auto speedR = speedBuf.GetVelocity(5, false).SqrLength();
         DistResult shortestDist =
-            weapPosBuf.ShortestDisRecently(iProjCollisionFrame, proj->GetPosition(), velocity, isSlowed);
+            weapPosBuf.ShortestDisRecently(iProjCollisionFrame, proj->GetPosition(), velocity, isSlowed, isUsingShield, speedL, speedR );
+        // If using shield, compare with shield collision
+        if (isUsingShield && bEnableShieldCollision) {
+            if (speedL >= fProjShieldSpeedThres) {
+                float extraLength = isSlowed ? 0 : 30.0f;
+                RE::NiPoint3 posProjHead =
+                    proj->GetPosition() + velocity / velocity.Length() * (fProjLength / 2 + extraLength);
+                RE::NiPoint3 posProjTail =
+                    proj->GetPosition() - velocity / velocity.Length() * (fProjLength / 2 + extraLength);
+                DistResult shieldDist =
+                    DistForShield(shieldCenter, shieldNormal, fShieldRadius, posProjHead, posProjTail);
+                if (shortestDist.dist > shieldDist.dist) shortestDist = shieldDist; 
+            }
+        }
         if (shortestDist.dist > fProjCollisionDistThres || (isMissile && shortestDist.dist > fProjCollisionDistThres + 15.0f)) {
             log::trace("Parry projectile no success. Dist:{}", shortestDist.dist);
             log::trace("Left weapon bot:{}. top:{}",
@@ -428,6 +524,8 @@ void ZacOnFrame::CollisionDetection() {
 
         // Mark as parried, to avoid being parried multiple times
         parriedProj.PushParried(proj);
+
+        proj->SetActivationBlocked(true); // picking up parried arrow may CTD
 
         auto oriVel = projRuntime.linearVelocity;
         log::trace("Parried projectile! Ori Velocity:{},{},{}", oriVel.x, oriVel.y, oriVel.z);
@@ -484,6 +582,10 @@ void ZacOnFrame::CollisionDetection() {
         // Slow time
         TimeSlowEffect(playerActor, iTimeSlowFrameProj);
 
+        // vibration
+        int hapticFrame = (iHapticStrMin + iHapticStrMax) / 2;
+        vibrateController(hapticFrame, shortestDist.proj_isLeft);
+
         // Play sound and spark
         auto nodeName = shortestDist.proj_isLeft ? "SHIELD"sv : "WEAPON"sv;
         if (isPlayerUsingClaw) {
@@ -528,7 +630,12 @@ void ZacOnFrame::CollisionDetection() {
             if (actorNPC == playerActor || actorNPC->IsDead()) {
                 continue;
             }
-            logger::trace("A nearby actor. Name:{}. Baseform:{:x}. Race:{:x}", actorNPC->GetBaseObject()->GetName(),
+            if (IsFriend(actorNPC, playerActor)) {
+                logger::debug("A friend. continue. Name:{}. Baseform:{:x}. Race:{:x}", actorNPC->GetBaseObject()->GetName(),
+                              actorNPC->GetBaseObject()->formID, actorNPC->GetRace()->formID);
+                continue;
+            }
+            logger::trace("A nearby enemy. Name:{}. Baseform:{:x}. Race:{:x}", actorNPC->GetBaseObject()->GetName(),
                           actorNPC->GetBaseObject()->formID, actorNPC->GetRace()->formID);
 
             if (bShowEnemyWeaponSegment) {
@@ -606,13 +713,22 @@ void ZacOnFrame::CollisionDetection() {
 
             RE::NiPoint3 contactPos; // approximately where collision happens
             float contactToPlayerHand, contactToEnemyHand; // these are used to spawn sparks after collision
-            auto dis_playerL_enemyL =
-                OnMeleeHit::Dist(posWeaponBottomL, posWeaponTopL, posNPCWeaponBottomL, posNPCWeaponTopL);
-            auto dis_playerL_enemyR =
-                OnMeleeHit::Dist(posWeaponBottomL, posWeaponTopL, posNPCWeaponBottomR, posNPCWeaponTopR);
-            auto dis_playerR_enemyL =
+            DistResult dis_playerL_enemyL, dis_playerL_enemyR, dis_playerR_enemyL, dis_playerR_enemyR;
+            if (isUsingShield) {
+                dis_playerL_enemyL = DistForShield(shieldCenter, shieldNormal, fShieldRadius,
+                                                               posNPCWeaponBottomL, posNPCWeaponTopL);
+                dis_playerL_enemyR =
+                    DistForShield(shieldCenter, shieldNormal, fShieldRadius, posNPCWeaponBottomR, posNPCWeaponTopR);
+            } else {
+                dis_playerL_enemyL =
+                    OnMeleeHit::Dist(posWeaponBottomL, posWeaponTopL, posNPCWeaponBottomL, posNPCWeaponTopL);
+                dis_playerL_enemyR =
+                    OnMeleeHit::Dist(posWeaponBottomL, posWeaponTopL, posNPCWeaponBottomR, posNPCWeaponTopR);
+            }
+            
+            dis_playerR_enemyL =
                 OnMeleeHit::Dist(posWeaponBottomR, posWeaponTopR, posNPCWeaponBottomL, posNPCWeaponTopL);
-            auto dis_playerR_enemyR =
+            dis_playerR_enemyR =
                 OnMeleeHit::Dist(posWeaponBottomR, posWeaponTopR, posNPCWeaponBottomR, posNPCWeaponTopR);
 
             bool isCollision = false;
@@ -711,6 +827,10 @@ void ZacOnFrame::CollisionDetection() {
                 }
                 bool isRotClockwise = ShouldRotateClockwise(playerActor->GetPosition(), actorNPC->GetPosition(), playerWeapSpeed);
                 int64_t rotDurationFrame = RotateFrame(playerWeapSpeed.SqrLength());
+                if (HasShield && isPlayerLeft) {
+                    rotDurationFrame /= 3;
+                    pushEnemyVelocity = pushEnemyVelocity * 0.4f;
+                }
 
                 auto col = Collision(actorNPC, iFrameCount, actorNPC->GetPosition(),
                                      CalculatePushDist(true, speed), contactToEnemyHand, isEnemyLeft,
@@ -732,6 +852,7 @@ void ZacOnFrame::CollisionDetection() {
                 static PlayerCollision* latestCol = PlayerCollision::GetSingleton();
                 RE::hkVector4 pushPlayerVelocity =
                     CalculatePushVector(actorNPC->GetPosition(), playerActor->GetPosition(), false, speed);
+                if (HasShield && isPlayerLeft) pushPlayerVelocity = pushPlayerVelocity * 0.0f;
                 latestCol->SetValue(iFrameCount, contactToPlayerHand, isPlayerLeft, pushPlayerVelocity, 10,
                                     CalculatePushDist(false, speed), playerActor->GetPosition(), playerActor);
 
@@ -840,6 +961,42 @@ void ZacOnFrame::StopTimeSlowEffect(RE::Actor* playerActor) {
 
 void ZacOnFrame::CollisionEffect(RE::Actor* playerActor, RE::Actor* enemyActor, RE::NiPoint3 contactPos, bool isEnemyLeft, bool isPlayerLeft) {
    
+    auto speed = speedBuf.GetVelocity(5, isPlayerLeft).SqrLength();
+    //char formattedString[50];
+    //sprintf(formattedString, "Speed: %f", speed);
+    //RE::DebugNotification(formattedString);
+
+    // If player parried with shield, then it's not a parry, but a block, using vanilla blocking system
+    bool isBlock = HasShield(playerActor) && isPlayerLeft;
+
+    
+    // (Block - 1) Make player enter block pose and change ConeAngle
+    if (isBlock) {
+        if (!playerActor->IsBlocking()) {
+            bool bNotifyResult = playerActor->NotifyAnimationGraph("blockStart"sv);
+            log::debug("Processing shield collision as block. Animation notify result:{}", bNotifyResult);
+        }
+        if (playerActor->IsBlocking() && iFrameStopBlock == 0) {
+            // if player is blocking using vanilla holding shield, we don't set iFrameStopBlock
+        } else {
+            // otherwise, update iFrameStopBlock
+            iFrameStopBlock = iFrameCount + iFrameBlockDur;
+        }
+        
+
+        // Also, change cone. Skyrim checks if two actors are facing each other before it decides if block happens
+        // Use papyrus to set fCombatHitConeAngle
+        SetCone(180.0f);
+
+        // Deprecated: cone will be null
+        // auto iniHandler = RE::INISettingCollection::GetSingleton();
+        // if (iniHandler) {
+        //    auto cone = iniHandler->GetSetting("fCombatHitConeAngle");
+        //    if (cone) {}
+        //}
+    }
+    
+    // (Parry or Block - 1) Display spark and sound
     auto nodeName = isPlayerLeft?
         "SHIELD"sv: "WEAPON"sv;
     bool isPlayerUsingClaw = false;
@@ -856,8 +1013,6 @@ void ZacOnFrame::CollisionEffect(RE::Actor* playerActor, RE::Actor* enemyActor, 
     const auto nodeNameFoot = "NPC L Toe0 [LToe]"sv;
     auto boneFoot = netimmerse_cast<RE::NiNode*>(rootEnemy->GetObjectByName(nodeNameFoot));
 
-    bDisableSpark = false;
-    // Display spark and sound
     if (!bSparkForBeast) {
         if (isPlayerUsingClaw) bDisableSpark = true;
         switch (GetSpecialRace(enemyActor)) { 
@@ -892,219 +1047,232 @@ void ZacOnFrame::CollisionEffect(RE::Actor* playerActor, RE::Actor* enemyActor, 
                                   boneFoot);
     });
 
-    // if enemy is power attacking, double sta cost to player
-    bool isEnemyPower = false;
-    if (auto enemyAI = enemyActor->GetActorRuntimeData().currentProcess; enemyAI) {
-        if (enemyAI->high && enemyAI->high->attackData) {
-            if (enemyAI->high->attackData->data.flags.any(RE::AttackData::AttackFlag::kPowerAttack)) {
-                isEnemyPower = true;
+    float playerStaCost = fPlayerStaCostMin;
+
+    //  // (Parry - 1) Calculate stamina cost to enemy
+    if (!isBlock) {
+        // if enemy is power attacking, double sta cost to player
+        bool isEnemyPower = false;
+        float enemyPowerMulti = 1.0f;
+        if (auto enemyAI = enemyActor->GetActorRuntimeData().currentProcess; enemyAI) {
+            if (enemyAI->high && enemyAI->high->attackData) {
+                if (enemyAI->high->attackData->data.flags.any(RE::AttackData::AttackFlag::kPowerAttack)) {
+                    isEnemyPower = true;
+                    enemyPowerMulti = enemyAI->high->attackData->data.damageMult;
+                }
+                // trackedDamage is not very reliable, since claw races may have 0. damageMult reflects power attack's bonus
+                log::trace("Enemy attack. Tracked damage:{}. damageMult:{}. Is power:{}",
+                           enemyAI->trackedDamage, enemyAI->high->attackData->data.damageMult,
+                           isEnemyPower);
             }
-            log::trace("Enemy attack damageMult:{}. Is power:{}", enemyAI->high->attackData->data.damageMult, isEnemyPower);
-            
         }
-    }
-    // if player is power attacking, double sta cost to player
-    bool isPlayerPower = false;
-    if (auto playerAI = playerActor->GetActorRuntimeData().currentProcess; playerAI) {
-        if (playerAI->high && playerAI->high->attackData &&
-            playerAI->high->attackData->data.flags.any(RE::AttackData::AttackFlag::kPowerAttack)) {
-            isPlayerPower = true;
-            log::trace("Player is power attacking!");
+        // if player is power attacking, double sta cost to player
+        bool isPlayerPower = false;
+        if (auto playerAI = playerActor->GetActorRuntimeData().currentProcess; playerAI) {
+            if (playerAI->high && playerAI->high->attackData &&
+                playerAI->high->attackData->data.flags.any(RE::AttackData::AttackFlag::kPowerAttack)) {
+                isPlayerPower = true;
+                log::trace("Player is power attacking!");
+            }
         }
-    }
 
-    // enemy stamina cost and may recoil
-    if (!enemyActor->AsActorValueOwner()) {
-        log::error("Enemy doesn't have actorvalueowner:{}", enemyActor->GetDisplayFullName());
-        return;
-    } else if (!playerActor->AsActorValueOwner()) {
-        log::error("Player doesn't have actorvalueowner:{}", playerActor->GetDisplayFullName());
-        return;
-    } 
-    auto enemyCurSta = enemyActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kStamina);
-    uint16_t playerDamage(5), enemyDamage(5), oriDmg(0);  // 5 for unhanded
-    if (playerActor->GetEquippedObject(isPlayerLeft)) {
-        if (auto weap = playerActor->GetEquippedObject(isPlayerLeft)->As<RE::TESObjectWEAP>(); weap) {
-            playerDamage = weap->attackDamage > playerDamage ? weap->attackDamage: playerDamage;
-            auto oriDmg = playerDamage;
-            if (IsOneHandWeap(playerActor, isPlayerLeft))
-                playerDamage =
-                    (uint16_t)((float)playerDamage *
-                               (1.0f + playerActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kOneHanded) / 100.0f));
-            else if (IsTwoHandWeap(playerActor, isPlayerLeft))
-                playerDamage =
-                    (uint16_t)((float)playerDamage *
-                               (1.0f +
-                                playerActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kTwoHanded) / 100.0f));
-            else if (bHandToHandLoad && IsHandToHand(playerActor, isPlayerLeft))
-                playerDamage =
-                    (uint16_t)((float)playerDamage *
-                               (1.0f +
-                                playerActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kLockpicking) / 100.0f));
-            log::trace("Player damage: {}. Ori damage: {}", playerDamage, oriDmg);
+        // enemy stamina cost and may recoil
+        if (!enemyActor->AsActorValueOwner()) {
+            log::error("Enemy doesn't have actorvalueowner:{}", enemyActor->GetDisplayFullName());
+            return;
+        } else if (!playerActor->AsActorValueOwner()) {
+            log::error("Player doesn't have actorvalueowner:{}", playerActor->GetDisplayFullName());
+            return;
         }
-    }
-    if (enemyActor->GetEquippedObject(isEnemyLeft)) {
-        if (auto weap = enemyActor->GetEquippedObject(isEnemyLeft)->As<RE::TESObjectWEAP>(); weap) {
-            enemyDamage = weap->attackDamage > enemyDamage ? weap->attackDamage : enemyDamage;
-            oriDmg = enemyDamage;
-            if (IsOneHandWeap(enemyActor, isEnemyLeft))
-                enemyDamage =
-                    (uint16_t)((float)enemyDamage *
-                               (1.0f +
-                                enemyActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kOneHanded) / 100.0f));
-            else if (IsTwoHandWeap(enemyActor, isEnemyLeft))
-                enemyDamage =
-                    (uint16_t)((float)enemyDamage *
-                               (1.0f +
-                                enemyActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kTwoHanded) / 100.0f));
+        auto enemyCurSta = enemyActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kStamina);
+        uint16_t playerDamage(5), enemyDamage(5), oriDmg(0);  // 5 for unhanded
+        if (playerActor->GetEquippedObject(isPlayerLeft)) {
+            if (auto weap = playerActor->GetEquippedObject(isPlayerLeft)->As<RE::TESObjectWEAP>(); weap) {
+                playerDamage = weap->attackDamage > playerDamage ? weap->attackDamage : playerDamage;
+                auto oriDmg = playerDamage;
+                if (IsOneHandWeap(playerActor, isPlayerLeft))
+                    playerDamage =
+                        (uint16_t)((float)playerDamage *
+                                   (1.0f + playerActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kOneHanded) /
+                                               100.0f));
+                else if (IsTwoHandWeap(playerActor, isPlayerLeft))
+                    playerDamage =
+                        (uint16_t)((float)playerDamage *
+                                   (1.0f + playerActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kTwoHanded) /
+                                               100.0f));
+                else if (bHandToHandLoad && IsHandToHand(playerActor, isPlayerLeft))
+                    playerDamage =
+                        (uint16_t)((float)playerDamage * (1.0f + playerActor->AsActorValueOwner()->GetActorValue(
+                                                                     RE::ActorValue::kLockpicking) /
+                                                                     100.0f));
+                log::trace("Player damage: {}. Ori damage: {}", playerDamage, oriDmg);
+            }
         }
-    }
-    auto enemyActorMeleeDamage =
-        enemyActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kMeleeDamage) *
-        enemyActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kAttackDamageMult) * 0.7;  // for special races, but seems 0
-    enemyDamage = enemyDamage > enemyActorMeleeDamage ? enemyDamage : enemyActorMeleeDamage;
-    auto enemyActorUnArmedDamage =
-        enemyActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kUnarmedDamage) *
-                                   enemyActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kAttackDamageMult) *
-                                   0.7;  // for special races. 
-    enemyDamage = enemyDamage > enemyActorUnArmedDamage ? enemyDamage : enemyActorUnArmedDamage;
-    log::trace("Damage of enemy. Final: {}. Ori: {}. Melee:{}. Unarmed:{}", enemyDamage, oriDmg, enemyActorMeleeDamage,
-               enemyActorUnArmedDamage);
+        if (enemyActor->GetEquippedObject(isEnemyLeft)) {
+            if (auto weap = enemyActor->GetEquippedObject(isEnemyLeft)->As<RE::TESObjectWEAP>(); weap) {
+                enemyDamage = weap->attackDamage > enemyDamage ? weap->attackDamage : enemyDamage;
+                oriDmg = enemyDamage;
+                if (IsOneHandWeap(enemyActor, isEnemyLeft))
+                    enemyDamage =
+                        (uint16_t)((float)enemyDamage *
+                                   (1.0f + enemyActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kOneHanded) /
+                                               100.0f));
+                else if (IsTwoHandWeap(enemyActor, isEnemyLeft))
+                    enemyDamage =
+                        (uint16_t)((float)enemyDamage *
+                                   (1.0f + enemyActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kTwoHanded) /
+                                               100.0f));
+            }
+        }
+        auto enemyActorMeleeDamage = enemyActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kMeleeDamage) *
+                                     enemyActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kAttackDamageMult) *
+                                     0.7;  // for special races, but seems 0
+        enemyDamage = enemyDamage > enemyActorMeleeDamage ? enemyDamage : enemyActorMeleeDamage;
+        auto enemyActorUnArmedDamage =
+            enemyActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kUnarmedDamage) *
+            enemyActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kAttackDamageMult) *
+            0.7;  // for special races.
+        enemyDamage = enemyDamage > enemyActorUnArmedDamage ? enemyDamage : enemyActorUnArmedDamage;
+        log::trace("Damage of enemy. Final: {}. Ori: {}. Melee:{}. Unarmed:{}", enemyDamage, oriDmg,
+                   enemyActorMeleeDamage, enemyActorUnArmedDamage);
 
-    float enemyStaCost = fEnemyStaCostWeapMulti * (float) ( 2.0 * playerDamage - enemyDamage);
-    if (isPlayerPower && !isEnemyPower) {
-        enemyStaCost *= 2;
-    }
-    enemyStaCost = enemyStaCost < fEnemyStaCostMin ? fEnemyStaCostMin : enemyStaCost;
-    enemyStaCost = enemyStaCost > fEnemyStaCostMax ? fEnemyStaCostMax : enemyStaCost;
-    float enemyFinalSta = enemyCurSta - enemyStaCost;
-    if (enemyFinalSta < 0.0f) {
-        enemyFinalSta = 0.0f;
-    }
-    enemyStaCost = enemyCurSta - enemyFinalSta;
-    enemyActor->AsActorValueOwner()->RestoreActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage, RE::ActorValue::kStamina,
-                                                       -enemyStaCost);
+        float enemyStaCost = fEnemyStaCostWeapMulti * (float)(2.0 * playerDamage - enemyDamage);
+        if (isPlayerPower && !isEnemyPower) {
+            enemyStaCost *= 2;
+        }
+        enemyStaCost = enemyStaCost < fEnemyStaCostMin ? fEnemyStaCostMin : enemyStaCost;
+        enemyStaCost = enemyStaCost > fEnemyStaCostMax ? fEnemyStaCostMax : enemyStaCost;
+        float enemyFinalSta = enemyCurSta - enemyStaCost;
+        if (enemyFinalSta < 0.0f) {
+            enemyFinalSta = 0.0f;
+        }
+        enemyStaCost = enemyCurSta - enemyFinalSta;
+        enemyActor->AsActorValueOwner()->RestoreActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage, RE::ActorValue::kStamina,
+                                                           -enemyStaCost);
 
-    log::trace("Player damage: {}. Enemy cur sta:{}. cost:{}. final:{}", playerDamage, enemyCurSta,
-               enemyStaCost, enemyFinalSta);
-    log::trace("Enemy perm sta:{}", enemyActor->AsActorValueOwner()->GetPermanentActorValue(RE::ActorValue::kStamina));
+        log::trace("Player damage: {}. Enemy cur sta:{}. cost:{}. final:{}", playerDamage, enemyCurSta, enemyStaCost,
+                   enemyFinalSta);
+        log::trace("Enemy perm sta:{}",
+                   enemyActor->AsActorValueOwner()->GetPermanentActorValue(RE::ActorValue::kStamina));
+
+        // (Parry - 2) Enemy recoil and time slow. Enemy recoil based on player's weapon speed and their remaining
+        // stamina
+
+        log::trace("Player moving their weapon at speed:{}", speed);
+        if (isPlayerPower || speed > fEnemyLargeRecoilVelocityThres) {
+            RecoilEffect(enemyActor, 2);
+            TimeSlowEffect(playerActor, iTimeSlowFrameLargeRecoil);
+        } else if (speed > fEnemyStopVelocityThres) {
+            RecoilEffect(enemyActor, 1);
+            TimeSlowEffect(playerActor, iTimeSlowFrameStop);
+        } else if (enemyFinalSta <  // Enemy recoil based on stamina
+                   fEnemyStaLargeRecoilThresPer *
+                       enemyActor->AsActorValueOwner()->GetPermanentActorValue(RE::ActorValue::kStamina)) {
+            RecoilEffect(enemyActor, 2);
+            TimeSlowEffect(playerActor, iTimeSlowFrameLargeRecoil);
+        } else if (enemyFinalSta < fEnemyStaStopThresPer * enemyActor->AsActorValueOwner()->GetPermanentActorValue(
+                                                               RE::ActorValue::kStamina)) {
+            RecoilEffect(enemyActor, 1);
+            TimeSlowEffect(playerActor, iTimeSlowFrameStop);
+        } else {
+            TimeSlowEffect(playerActor, iTimeSlowFrameNormal);
+        }
 
 
-    // Enemy recoil based on player's weapon speed and their remaining stamina
-    auto speed = speedBuf.GetVelocity(5, isPlayerLeft).SqrLength();
-    log::trace("Player moving their weapon at speed:{}", speed);
-    if (isPlayerPower || speed > fEnemyLargeRecoilVelocityThres) {
-        RecoilEffect(enemyActor, 2);
-        TimeSlowEffect(playerActor, iTimeSlowFrameLargeRecoil);
-    } else if (speed > fEnemyStopVelocityThres) {
-        RecoilEffect(enemyActor, 1);
-        TimeSlowEffect(playerActor, iTimeSlowFrameStop);
-    } else if (enemyFinalSta < // Enemy recoil based on stamina
-        fEnemyStaLargeRecoilThresPer *
-                            enemyActor->AsActorValueOwner()->GetPermanentActorValue(RE::ActorValue::kStamina)) {
-        RecoilEffect(enemyActor, 2);
-        TimeSlowEffect(playerActor, iTimeSlowFrameLargeRecoil);
-    } else if (enemyFinalSta < fEnemyStaStopThresPer *
-                                   enemyActor->AsActorValueOwner()->GetPermanentActorValue(RE::ActorValue::kStamina)) {
-        RecoilEffect(enemyActor, 1);
-        TimeSlowEffect(playerActor, iTimeSlowFrameStop);
-    } else {
-        TimeSlowEffect(playerActor, iTimeSlowFrameNormal);
-    }
-
-    // Player stamina cost
-    auto playerCurSta = playerActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kStamina);
-    float playerStaCost = fPlayerStaCostWeapMulti * (float)(2.0 * enemyDamage - playerDamage);
-    if (isEnemyPower && !isPlayerPower) playerStaCost *= 2;
-    playerStaCost = playerStaCost < fPlayerStaCostMin ? fPlayerStaCostMin : playerStaCost;
-    playerStaCost = playerStaCost > fPlayerStaCostMax ? fPlayerStaCostMax : playerStaCost;
-    float playerFinalSta = playerCurSta - playerStaCost;
-    if (playerFinalSta < 0.0f) {
+        // (Parry - 3) Player stamina cost
+        auto playerCurSta = playerActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kStamina);
+        
+        if (isEnemyPower && !isPlayerPower) {
+            playerStaCost = fPlayerStaCostWeapMulti * (float)(2.0 * enemyDamage * enemyPowerMulti - playerDamage);
+        } else {
+            playerStaCost = fPlayerStaCostWeapMulti * (float)(2.0 * enemyDamage - playerDamage);
+        }
+        playerStaCost = playerStaCost < fPlayerStaCostMin ? fPlayerStaCostMin : playerStaCost;
+        playerStaCost = playerStaCost > fPlayerStaCostMax ? fPlayerStaCostMax : playerStaCost;
+        float playerFinalSta = playerCurSta - playerStaCost;
+        if (playerFinalSta < 0.0f) {
             playerFinalSta = 0.0f;
-    }
-    playerStaCost = playerCurSta - playerFinalSta;
-    // if player is moving their weapon, reduce stamina cost
+        }
+        playerStaCost = playerCurSta - playerFinalSta;
+        // if player is moving their weapon, reduce stamina cost
 
-    if (speed > fPlayerWeaponSpeedRewardThres) {
-        playerStaCost *= fPlayerWeaponSpeedReward;
-    } else if (speed > fPlayerWeaponSpeedRewardThres2) {
+        if (speed > fEnemyLargeRecoilVelocityThres) {
+            playerStaCost *= fPlayerWeaponSpeedReward;
+        } else if (speed > fEnemyStopVelocityThres) {
             playerStaCost *= fPlayerWeaponSpeedReward2;
-    } 
-    playerFinalSta = playerCurSta - playerStaCost;
-    playerActor->AsActorValueOwner()->RestoreActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage, RE::ActorValue::kStamina,
-                                                        -playerStaCost);
-    log::trace("Enemy damage: {}. player cur sta:{}. cost:{}. final:{}", enemyDamage, playerCurSta, playerStaCost,
-               playerFinalSta);
+        }
+        playerFinalSta = playerCurSta - playerStaCost;
+        playerActor->AsActorValueOwner()->RestoreActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage, RE::ActorValue::kStamina,
+                                                            -playerStaCost);
+        log::trace("Enemy damage: {}. player cur sta:{}. cost:{}. final:{}", enemyDamage, playerCurSta, playerStaCost,
+                   playerFinalSta);
 
-    // Player recoil
-    if (playerFinalSta < fPlayerStaLargeRecoilThresPer *
-                              playerActor->AsActorValueOwner()->GetPermanentActorValue(RE::ActorValue::kStamina)) {
+        // (Parry - 4) Player health cost
+        // If player's weapon speed is lower than EnemyStopVelocityThreshold, they get hurt from the parry
+        // The damage depends on enemy's weapon, skill, power attack, player's armor rate, player's Block skill
+        // The damage also depends on player's weapon speed. When speed equals to or above EnemyStopVelocityThreshold, damage is 0
+        // The damage is also multiplied by PlayerHealthCostMulti, capped by fPlayerHealthCostMax.\n"
+
+        float playerHealthCost = enemyDamage * enemyPowerMulti * 0.6f;
+
+        auto playerBlockSkill = playerActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kBlock);
+        float playerBlockReduce = 0.3f + playerBlockSkill / 100.0f;
+        playerBlockReduce = playerBlockReduce > 0.85f ? 0.85f : playerBlockReduce;
+
+        auto playerArmorRating = playerActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kDamageResist);
+        float playerArmorReduce = playerArmorRating * 0.0012f + 0.03f * 4; // 0.03f for hidden armor rating per piece
+        playerArmorReduce = playerArmorReduce > 0.80f ? 0.80f : playerArmorReduce;
+
+        playerHealthCost *= (1 - playerBlockReduce) * (1 - playerArmorReduce);
+
+        if (speed >= fEnemyStopVelocityThres) {
+            playerHealthCost = 0.0f;
+        } else {
+            float speedReduce = speed / fEnemyStopVelocityThres;
+            playerHealthCost *= (1 - speedReduce);
+        }
+
+        playerHealthCost *= fPlayerHealthCostMulti;
+        if (playerHealthCost > fPlayerHealthCostMax) playerHealthCost = fPlayerHealthCostMax;
+        if (playerHealthCost < 0.0f) playerHealthCost = 0.0f;
+        playerActor->AsActorValueOwner()->RestoreActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage, RE::ActorValue::kHealth,
+                                                            -playerHealthCost);
+        log::debug("Player health cost:{}, blockReduce:{}, armor rating: {}", playerHealthCost,  playerBlockReduce, playerArmorRating);
+
+
+
+        // (Parry - 5) Player recoil
+        if (playerFinalSta < fPlayerStaLargeRecoilThresPer *
+                                 playerActor->AsActorValueOwner()->GetPermanentActorValue(RE::ActorValue::kStamina)) {
             playerActor->NotifyAnimationGraph("recoilStop");
             playerActor->NotifyAnimationGraph("AttackStop");
             playerActor->NotifyAnimationGraph("recoilLargeStart");
-    } else if (playerFinalSta < fPlayerStaStopThresPer * playerActor->AsActorValueOwner()->GetPermanentActorValue(
-                                                             RE::ActorValue::kStamina)) {
+        } else if (playerFinalSta < fPlayerStaStopThresPer * playerActor->AsActorValueOwner()->GetPermanentActorValue(
+                                                                 RE::ActorValue::kStamina)) {
             playerActor->NotifyAnimationGraph("recoilStop");
             playerActor->NotifyAnimationGraph("AttackStop");
-    }
-
-    // Haptic vibration on controller, based on playerStaCost
-    auto papyrusVM = RE::BSScript::Internal::VirtualMachine::GetSingleton();
-    if (papyrusVM) {
-        int hapticFrame = (int)(playerStaCost * fHapticMulti);
-        hapticFrame = hapticFrame < iHapticStrMin ? iHapticStrMin : hapticFrame;
-        hapticFrame = hapticFrame > iHapticStrMax ? iHapticStrMax : hapticFrame;
-
-        RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> callback;
-
-        log::trace("Calling papyrus");
-        if (papyrusVM->TypeIsValid("VRIK"sv)) {
-            log::trace("VRIK is installed");
-            RE::BSScript::IFunctionArguments* hapticArgs;
-            if (isPlayerLeft) {
-                hapticArgs = RE::MakeFunctionArguments(true, (int)hapticFrame, (int)iHapticLengthMicroSec);
-            } else {
-                hapticArgs = RE::MakeFunctionArguments(false, (int)hapticFrame, (int)iHapticLengthMicroSec);
-            }
-            // Function VrikHapticPulse(Bool onLeftHand, Int frames, Int microsec) native global
-            papyrusVM->DispatchStaticCall("VRIK"sv, "VrikHapticPulse"sv, hapticArgs, callback);
-        } else {
-            log::trace("VRIK not installed");
-            // Now we call vanilla's script Game.ShakeController(float afLeftStrength, float afRightStrength, float afDuration)
-            // afLeftStrength: The strength of the left motor. Clamped from 0 to 1.
-            // afRightStrength: The strength of the right motor.Clamped from 0 to 1. 
-            // afDuration : How long to shake the controller - in seconds.
-            if (papyrusVM->TypeIsValid("Game"sv)) {
-                RE::BSScript::IFunctionArguments* hapticArgs;
-                if (isPlayerLeft) {
-                    hapticArgs = RE::MakeFunctionArguments(((float)hapticFrame) / ((float)iHapticStrMax), 0.0f,
-                                                           (float)iHapticLengthMicroSec / 1000000);
-                } else {
-                    hapticArgs = RE::MakeFunctionArguments(0.0f, ((float)hapticFrame) / ((float)iHapticStrMax), 
-                                                           (float)iHapticLengthMicroSec / 1000000);
-                }
-                papyrusVM->DispatchStaticCall("Game"sv, "ShakeController"sv, hapticArgs, callback);
-            } else {
-                log::trace("Failed to find vanilla Game script");
-            }
         }
-
-        log::trace("Finished calling papyrus");
-    } 
-        
+    }
     
 
-    // adv block and weapon skill
+    // (Parry or Block - 2) Haptic vibration on controller, based on playerStaCost
+    int hapticFrame = (int)(playerStaCost * fHapticMulti);
+    vibrateController(hapticFrame, isPlayerLeft);
+        
+    
+    // (Parry or Block - 3) adv block skill (if block) or weapon skill (if parry)
     auto playerAA = RE::PlayerCharacter::GetSingleton();
     if (playerAA) {
-        playerAA->AddSkillExperience(RE::ActorValue::kBlock, fExpBlock);
-        if (IsOneHandWeap(playerActor, isPlayerLeft))
-            playerAA->AddSkillExperience(RE::ActorValue::kOneHanded, fExpOneHand);
-        else if (IsTwoHandWeap(playerActor, isPlayerLeft))
-            playerAA->AddSkillExperience(RE::ActorValue::kTwoHanded, fExpTwoHand);
-        else if (bHandToHandLoad && IsHandToHand(playerActor, isPlayerLeft))
-            playerAA->AddSkillExperience(RE::ActorValue::kLockpicking, fExpHandToHand);
+        if (isBlock) {
+            playerAA->AddSkillExperience(RE::ActorValue::kBlock, fExpBlock);
+        } else {
+            if (IsOneHandWeap(playerActor, isPlayerLeft))
+                playerAA->AddSkillExperience(RE::ActorValue::kOneHanded, fExpOneHand);
+            else if (IsTwoHandWeap(playerActor, isPlayerLeft))
+                playerAA->AddSkillExperience(RE::ActorValue::kTwoHanded, fExpTwoHand);
+            else if (bHandToHandLoad && IsHandToHand(playerActor, isPlayerLeft))
+                playerAA->AddSkillExperience(RE::ActorValue::kLockpicking, fExpHandToHand);
+        }
     }
 }
 
@@ -1146,7 +1314,7 @@ bool ZacOnFrame::FrameGetWeaponPos(RE::Actor* actor, RE::NiPoint3& posWeaponBott
     const auto weaponR = netimmerse_cast<RE::NiNode*>(actorRoot->GetObjectByName(nodeNameR));
 
 
-    // check whether the actor really equips a weapon on that hand
+    // check whether the actor reall y equips a weapon on that hand
     // one-hand weapon: correctly on each hand
     // fist: equipL/R is null
     // bow: both hand are same
@@ -1256,6 +1424,7 @@ bool ZacOnFrame::FrameGetWeaponPos(RE::Actor* actor, RE::NiPoint3& posWeaponBott
         }
         if (equipL->IsArmor()) {
             hasShield = true;
+            
         }
     } else {
         if (isPlayer) {
@@ -1333,12 +1502,18 @@ bool ZacOnFrame::FrameGetWeaponPos(RE::Actor* actor, RE::NiPoint3& posWeaponBott
     //    }
     //}
 
+    
+    if (!bSparkForFistBowAndStaff) {
+        if ((isFistL && isFistR && claws.isEmpty()) || isBow || isStaffL || isStaffR) {
+            bDisableSpark = true;
+        }
+    }
 
     // Handling normal humanoid actors
     if (!weapDSphere && !weapWolfHead && claws.isEmpty() && clawAndHead.isEmpty() && DWorkerLegs.isEmpty() &&
-        FSpiderClaws.isEmpty()
-        && !hasShield && weaponL 
-        && (isEquipL || (isFistL && isFistR) ) &&
+        FSpiderClaws.isEmpty() && weaponL 
+        &&
+        (isEquipL || (isFistL && isFistR) || (bEnableShieldCollision && hasShield)) &&
         !(!isPlayer && isBow) && !(!isPlayer && isStaffL)  // ignore enemy's bow and staff
         ) { // only enable fist collision when both hands are fist
         float reachL(0.0f), handleL(0.0f);
@@ -1370,6 +1545,12 @@ bool ZacOnFrame::FrameGetWeaponPos(RE::Actor* actor, RE::NiPoint3& posWeaponBott
             reachL = 70.0f;
             handleL = 70.0f;
             log::trace("Left: staff. actor:{}", actor->GetBaseObject()->GetName());
+        } else if (hasShield) {
+            reachL = fShieldRadius;
+            handleL = fShieldRadius;
+            log::trace("Left: Shield. actor:{}", actor->GetBaseObject()->GetName());
+
+            
         } else {
             log::trace("Left: unknown. actor:{}", actor->GetBaseObject()->GetName());
         }
@@ -1501,8 +1682,9 @@ bool ZacOnFrame::FrameGetWeaponFixedPos(RE::Actor* actor, RE::NiPoint3& posWeapo
     // Handling werewolf and vampire lord for player
     twoNodes claws = HandleClawRaces(actor, posHandL, posHandR, posWeaponTopL, posWeaponTopR);
 
-    if (!hasShield && claws.isEmpty() && weaponL &&
-        (isEquipL || (isFistL && isFistR))) {  // only enable fist collision when both hands are fist
+    if (claws.isEmpty() && weaponL &&
+        (isEquipL || (isFistL && isFistR) ||
+         (bEnableShieldCollision && hasShield))) {  // only enable fist collision when both hands are fist
         float reachL(70.0f);
         
         posHandL = weaponL->world.translate;
@@ -1575,5 +1757,39 @@ void ZacOnFrame::CleanBeforeLoad() {
     iFrameCount = 0;
     iFrameSlowCost = 0;
     iFrameTriggerPress = 0;
+    iFrameStopBlock = 0;
+    iFrameSetCone = 0;
+    iFramePressBlockButton = 0;
     parriedProj.Clear();
+}
+
+
+void ZacOnFrame::FillShieldCenterNormal(RE::Actor* actor, RE::NiPoint3& shieldCenter, RE::NiPoint3& shieldNormal) {
+    const auto actorRoot = netimmerse_cast<RE::BSFadeNode*>(actor->Get3D());
+    if (!actorRoot) {
+        log::warn("Fail to get actorRoot:{}", actor->GetBaseObject()->GetName());
+        return;
+    }
+
+    const auto nodeNameL = "SHIELD"sv;
+    auto weaponNodeL = netimmerse_cast<RE::NiNode*>(actorRoot->GetObjectByName(nodeNameL));
+
+    const auto nodeBaseStr = "NPC Pelvis [Pelv]"sv;  // base of player
+    const auto baseNode = netimmerse_cast<RE::NiNode*>(actorRoot->GetObjectByName(nodeBaseStr));
+
+    if (weaponNodeL) {
+        shieldCenter = weaponNodeL->world.translate;
+
+        auto rotationL = weaponNodeL->world.rotate;
+        rotationL = adjustNodeRotation(baseNode, rotationL, RE::NiPoint3(1.50f, 0.0f, 0.0f), false);
+
+        shieldNormal = RE::NiPoint3{rotationL.entry[0][1], rotationL.entry[1][1], rotationL.entry[2][1]};
+
+        // slightly move shield center towards shield normal a little, since previously center is hand
+        shieldCenter = shieldCenter + shieldNormal * 7.0f;
+
+        auto pointOutShield = shieldNormal * fShieldRadius + shieldCenter;
+
+        if (bShowPlayerWeaponSegment) debug_show_weapon_range(actor, shieldCenter, pointOutShield, weaponNodeL);
+    }
 }

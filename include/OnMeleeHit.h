@@ -82,8 +82,18 @@ public:
     bool proj_isLeft; // Warning: this field is not filled if the parry is not between weapon and projectile
 
     DistResult(float d, RE::NiPoint3 p) : dist(d), contactPoint(p) {}
+    DistResult(float d, RE::NiPoint3 p, bool proj_isLeft) : dist(d), contactPoint(p), proj_isLeft(proj_isLeft) {}
     DistResult() : dist(9999.0f) {}
 };
+
+RE::NiPoint3 closestPointOnSegmentForPoint(RE::NiPoint3& segStart, RE::NiPoint3& segEnd, RE::NiPoint3& target);
+
+float distPoint2Segment(RE::NiPoint3& segStart, RE::NiPoint3& segEnd, RE::NiPoint3& target);
+
+RE::NiPoint3 projectPointOntoCirclePlance(RE::NiPoint3& circleCenter, RE::NiPoint3& circleNormal, RE::NiPoint3& target);
+
+DistResult DistForShield(RE::NiPoint3& shieldCenter, RE::NiPoint3& shieldNormal, float radius, RE::NiPoint3& weapP1,
+                         RE::NiPoint3& weapP2);
 
 namespace OnMeleeHit {
 #pragma warning(push)

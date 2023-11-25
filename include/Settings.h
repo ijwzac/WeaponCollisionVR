@@ -11,6 +11,17 @@ extern bool bPlanck;
 extern int64_t iFrameSlowCost;
 extern std::chrono::steady_clock::time_point last_time;
 
+// Block
+extern bool bEnableShieldCollision;
+extern int64_t iFrameStopBlock;
+extern int64_t iFrameBlockDur;
+extern float fShieldRadius;
+extern float fOriginCone;
+extern int64_t iFrameSetCone;
+extern bool bPressButtonToBlock;
+extern uint32_t iBlockButton;
+extern int64_t iFramePressBlockButton;
+
 // Parry difficulty
 extern float fRangeMulti;          // controls the effective length of weapon in this mod
 extern float fCollisionDistThres;  // if two weapons are closer than this number, it's a collision
@@ -29,6 +40,8 @@ extern int64_t iProjSlowFrame; // How many frames will the projectile be slowed
 extern float fProjSlowCost; // Magicka cost to slow projectile
 extern uint32_t iProjSlowButton1; // 33 is vr trigger. 4096 is xbox controller A. 18 is keyboard E
 extern uint32_t iProjSlowButton2;
+extern float fProjWeapSpeedThres;
+extern float fProjShieldSpeedThres;
 
 // Parry effect on enemy
 extern float fEnemyPushVelocityMulti;  // the speed multiplier that the enemy will be pushed
@@ -54,16 +67,16 @@ extern float fPlayerStaCostMax;              // max stamina cost to player
 extern float fPlayerStaCostWeapMulti;        // multiplier of enemy's attack power.
 extern float fPlayerStaCostMin;              // multiplier of stamina cost.
                                              // The value after mutliply still need to fit in the min and max
-extern float fPlayerWeaponSpeedRewardThres;  // when player moves weapon at higher speed than this, their stamina cost
-                                             // is reduced by half
+extern float fPlayerHealthCostMax;
+extern float fPlayerHealthCostMulti;
 extern float fPlayerWeaponSpeedReward;       // Multiplier os stamina cost if high speed
-extern float fPlayerWeaponSpeedRewardThres2;
 extern float fPlayerWeaponSpeedReward2;
 extern float fPlayerStaUnableParryThresPer;         // when player stamina below this percent, they can't parry
 extern float fPlayerStaStopThresPer;         // when player stamina below this percent, they stop current attack
 extern float fPlayerStaLargeRecoilThresPer;  // when player stamina below this percent, they stop and have large recoil
 extern int64_t iSparkSpawn; // number of frames that we spawn spark on weapons.
 extern bool bSparkForBeast; 
+extern bool bSparkForFistBowAndStaff;
 extern float fTimeSlowRatio; // 0.1 means time flows at 10% of normal time
 extern int64_t iTimeSlowFrameNormal; // for how many frames will time be slow
 extern int64_t iTimeSlowFrameStop;
@@ -179,6 +192,10 @@ public:
         void Load(CSimpleIniA& a_ini);
     } sProjectile;
 
+    struct Block {
+        void Load(CSimpleIniA& a_ini);
+    } sBlock;
+
 private:
     Settings() = default;
     Settings(const Settings&) = delete;
@@ -266,6 +283,9 @@ public:
             logger::trace("Pressed key {}", dxScanCode);
             if (dxScanCode == iProjSlowButton1 || dxScanCode == iProjSlowButton2) {  // 33 is trigger
                 iFrameTriggerPress = iFrameCount;
+            }
+            if (dxScanCode == iBlockButton) {
+                iFramePressBlockButton = iFrameCount;
             }
         }
 
