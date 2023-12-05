@@ -21,10 +21,12 @@ extern int64_t iFrameSetCone;
 extern bool bPressButtonToBlock;
 extern uint32_t iBlockButton;
 extern int64_t iFramePressBlockButton;
+extern float fBlockEnemyLargeRecoilVelocityThres;
 
 // Parry difficulty
 extern float fRangeMulti;          // controls the effective length of weapon in this mod
 extern float fCollisionDistThres;  // if two weapons are closer than this number, it's a collision
+extern float fShieldCollisionDist;  // if two weapons are closer than this number, it's a collision
 extern bool bPlayerMustBeAttacking; // Recommended for non-VR players to turn on. VR player should turn off.
 
 // Projectile Parry

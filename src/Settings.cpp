@@ -23,6 +23,7 @@ std::chrono::steady_clock::time_point last_time;
 // Block
 int64_t iFrameStopBlock = 0;
 bool bEnableShieldCollision = true;
+float fShieldCollisionDist = 12.0f;
 int64_t iFrameBlockDur = 30;
 float fShieldRadius = 33.0f;
 float fOriginCone = 35.0f;
@@ -30,6 +31,7 @@ int64_t iFrameSetCone = 0;
 bool bPressButtonToBlock = false;
 uint32_t iBlockButton = 33;
 int64_t iFramePressBlockButton = 0;
+float fBlockEnemyLargeRecoilVelocityThres = 100.0f;
 
 // Projectile Parry
 bool bEnableProjParry = true;
@@ -45,7 +47,7 @@ float fProjSlowCost = 10.0f;
 uint32_t iProjSlowButton1 = 33;
 uint32_t iProjSlowButton2 = 33;
 float fProjWeapSpeedThres = 10.0f;
-float fProjShieldSpeedThres = 20.0f;
+float fProjShieldSpeedThres = 14.0f;
 
 // Enemy
 float fEnemyPushVelocityMulti = 8.0f;
@@ -151,15 +153,12 @@ void Settings::Main::Load(CSimpleIniA& a_ini) {
     
     detail::get_value(a_ini, bEnableShieldCollision, section, "EnableShieldCollision",
         "; Whether this mod calculates collision between player's shield and enemy's weapons/projectiles. More settings in \"Block\".\n"
-        "; ===Limitation: when you block with shield, enemy's model must be faced by the surface of shield (180 degrees range).\n"
-        "; ===Sorry for the trouble! This is not a problem most of the time, but sometimes you need to pay attention to shield's direction.\n"
-        "; ===Disabling Settings->VR->\"Realistic Shield Grip\" can almost solve this problem, if you don't mind that gripping angle.\n"
         "; Default:\"true\"");
     
 }
 
 void Settings::Difficulty::Load(CSimpleIniA& a_ini) {
-    static const char* section = "==========1. Important Settings==========";
+    static const char* section = "==========1. Important Weapon Parry Settings==========";
 
     detail::get_value(a_ini, bPlayerMustBeAttacking, section, "PlayerMustBeAttacking",
         ";======[1.1] Parry difficulty\n"
@@ -172,18 +171,15 @@ void Settings::Difficulty::Load(CSimpleIniA& a_ini) {
         "; Default:\"true\" for SE or AE player, \"false\" for VR player");
 
     detail::get_value(
-        a_ini, fCollisionDistThres, section, "CollisionDistance",
+        a_ini, fCollisionDistThres, section, "WeaponCollisionDistance",
         "; To trigger a collision between two weapons, how close weapons should be.\n"
         "; Higher value means easier parry. Recommend less than 30.0 for VR players, and 30.0~50.0 for SE and AE players. Unit: around 1.4 centimeter. Default:\"15.0\" for VR, \"50.0\" for SE/AE");
+
 
     detail::get_value(a_ini, fRangeMulti, section, "WeaponRangeMultiply",
         "; The length of weapon is multiplied by this value. This length is only used by this mod.\n"
         "; Higher value means easier parry. \"1.0\" matches the models of most weapons pretty good. Default:\"1.0\" for VR, \"1.35\" for SE/AE");
 
-    detail::get_value(a_ini, fProjCollisionDistThres, section, "ProjectileParryDistance",
-        "; To trigger a parry to projectile (spell, arrow), how close weapon and projectile should be.\n"
-        "; Higher value means easier parry. Recommend less than 20.0 for VR players, and around 60 for "
-        "SE and AE players. Unit: around 1.4 centimeter. Default:\"12.0\" for VR, \"60.0\" for SE/AE");
 
     detail::get_value(a_ini, iDelayEnemyHit, section, "DelayEnemyHitOnPlayer",
         "; This one is tricky but important to difficulty. This mod delays melee hit events from enemy to player,\n"
@@ -449,6 +445,14 @@ void Settings::Experience::Load(CSimpleIniA& a_ini) {
 void Settings::Block::Load(CSimpleIniA& a_ini) {
     static const char* section = "==========6. Block==========";
 
+    
+    detail::get_value(a_ini, fShieldCollisionDist, section, "ShieldCollisionDistance",
+                      "; To trigger a collision between player's shield and enemy's weapon, how close they should be.\n"
+                      "; Higher value means easier parry. Since vanilla shield blocking is only a problem in VR, this "
+                      "is turned off in SE/AE\n"
+                      "; Unit: around 1.4 centimeter. Default:\"12.0\" for VR, \"0.0\" for SE/AE");
+
+
 
     detail::get_value(a_ini, fShieldRadius, section, "ShieldRadius",
         "; Radius of shield's collision. In this mod, all shields are treated as a plate, sharing the same radius.\n"
@@ -461,17 +465,21 @@ void Settings::Block::Load(CSimpleIniA& a_ini) {
         "; If you ever get stuck in blocking pose, you can jump to stop it. Welcome to report a bug to me!\n"
         "; Default:\"30\"");
 
+    detail::get_value(a_ini, fBlockEnemyLargeRecoilVelocityThres, section, "BlockStaggerVelocityThreshold",
+        "; When player's shield speed is above this, enemy will stop the current attack and stagger.\n"
+        "; Unit:~ 1.5 cm per second. \"100.0\"");
+
     detail::get_value(
         a_ini, bPressButtonToBlock, section, "PressButtonToBlock",
         "; ==== If you use any timed-block mods like SOSCBO or Deflection, you may want to read this\n"
         "; When this is false, this mod makes you block enemy's attack if your shield collides with enemy's weapon.\n"
         "; When this is true, this mod checks both the collision and whether you are holding BlockButton.\n"
         "; This feature is designed for those timed-block mods. After enable this, there are 4 cases:\n"
-        "; (1) To have a timed-block, you need to press the button right before hit and \n"
+        "; (1) To have a timed-block, you need to press the button right before being hit and \n"
         "; also make your shield collide with enemy's weapon. The exact timing is decided by those mods.\n"
         "; (2) If you hold the button long before hit, those timed-block mods won't consider this as a timed-block\n"
         "; (3) If you hold the button but doesn't make shield collide with enemy's weapon, the block won't happen\n"
-        "; (4) If you make shield collide with enemy's weapon but don't hold the button, the block won't happen (there will be spark but it's just visual effect)\n"
+        "; (4) If you make shield collide with enemy's weapon but don't hold the button, the block won't happen\n"
         "; IMO, this makes the blocking more challenging and fun with SOSCBO or Deflection. \n"
         "; If you don't enable this, those mods will treat almost every block as a timed-block\n"
         "; My settings in SOSCBO: Timed-block cooldown: 0.00 sec (important)\n"
@@ -501,6 +509,11 @@ void Settings::Projectile::Load(CSimpleIniA& a_ini) {
     static const char* section = "==========7. Projectile Parry==========";
 
     
+    detail::get_value(a_ini, fProjCollisionDistThres, section, "ProjectileParryDistance",
+        "; To trigger a parry to projectile (spell, arrow), how close weapon and projectile should be.\n"
+        "; Higher value means easier parry. Recommend less than 20.0 for VR players, and around 60 for "
+        "SE and AE players. Unit: around 1.4 centimeter. Default:\"12.0\" for VR, \"60.0\" for SE/AE");
+    
     detail::get_value(a_ini, fProjLength, section, "ProjectileLength",
         "; The length of each projectile (including arrow, fireball, icespike, spiderweb, etc.) \n"
         "; BTW, parried arrows can't be picked up, to prevent a CTD bug\n"
@@ -518,7 +531,7 @@ void Settings::Projectile::Load(CSimpleIniA& a_ini) {
 
     detail::get_value(a_ini, fProjShieldSpeedThres, section, "ProjectileParryShieldMinSpeed",
             "; To be able to parry projectiles, shield's speed must be higher than this. \n"
-            "; I set this higher than weapon's because it's really easy to pary with shield (its collision is so big). Default:\"20.0\"");
+            "; I set this higher than weapon's because it's really easy to pary with shield (its collision is so big). Default:\"14.0\"");
 
     detail::get_value(a_ini, fProjSlowRadius, section, "ProjectileSlowRadius",
         "; ==== You can SLOW DOWN projectiles like Neo in The Matrix, at the cost of some magicka!!!\n"

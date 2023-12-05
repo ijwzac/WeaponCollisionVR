@@ -10,6 +10,8 @@ using namespace SKSE::log;
 
 using namespace ZacOnFrame;
 
+inline constexpr std::uint16_t NOP2 = 0x6690;
+
 // The hook below is taught by ThirdEyeSqueegee and Flip on Discord. Related code:
 // https://github.com/ThirdEyeSqueegee/DynamicGamma/blob/main/include/GammaController.h#L16 and
 // https://github.com/doodlum/MaxsuWeaponSwingParry-ng/blob/main/src/WeaponParry_Hooks.h
@@ -18,9 +20,17 @@ void ZacOnFrame::InstallFrameHook() {
     SKSE::AllocTrampoline(1 << 4);
     auto& trampoline = SKSE::GetTrampoline();
 
-    REL::Relocation<std::uintptr_t> OnFrameBase{REL::RelocationID(35565, 36564)};
+    REL::Relocation<std::uintptr_t> OnFrameBase{REL::RelocationID(35565, 36564)}; // 35565 is 1405bab10
     _OnFrame =
         trampoline.write_call<5>(OnFrameBase.address() + REL::Relocate(0x748, 0xc26, 0x7ee), ZacOnFrame::OnFrameUpdate);
+
+
+    // Now we need to make the 2-byte jna at SkyrimVR.exe+0x76e5f3 to be nop
+
+    REL::safe_write(OnFrameBase.address() + 0x1B3AE3, NOP2);  // 0x1B3AE3 is 0x76e5f3 - 0x5bab10 
+
+    
+    log::info("Safe write NOP to {:x}", OnFrameBase.address() + 0x1B3AE3);
 }
 
 bool isOurFnRunning = false;
@@ -118,22 +128,27 @@ void ZacOnFrame::CollisionDetection() {
         StopTimeSlowEffect(playerActor);
     }
 
-    if (iFrameCount >= iFrameStopBlock && iFrameStopBlock != 0 && playerActor->IsBlocking()) {
+    
+    bool bHasShield = HasShield(playerActor);
+    if (iFrameCount >= iFrameStopBlock && iFrameStopBlock != 0 && playerActor->IsBlocking() && bHasShield) {
         iFrameStopBlock = 0;
         playerActor->NotifyAnimationGraph("blockStop"sv);
         playerActor->SetGraphVariableBool("IsBlocking"sv, false);
-    } else if (iFrameStopBlock != 0) {
+        log::debug("Player now exits blocking");
+    } 
+    /*else if (iFrameStopBlock != 0) {
         playerActor->SetGraphVariableBool("IsBlocking"sv, true);
-    }
+    }*/
 
-    if (bPressButtonToBlock && HasShield(playerActor) && bEnableShieldCollision) {
+    if (bPressButtonToBlock && bHasShield && bEnableShieldCollision) {
         if (iFramePressBlockButton > 0 && iFrameCount - iFramePressBlockButton >= 0 &&
             iFrameCount - iFramePressBlockButton < 3) {
             if (!playerActor->IsBlocking()) {
                 playerActor->NotifyAnimationGraph("blockStart"sv);
                 playerActor->SetGraphVariableBool("IsBlocking"sv, true);
             }
-        } else if (iFrameCount - iFramePressBlockButton > 30 && playerActor->IsBlocking()) {
+        } else if (iFrameCount - iFramePressBlockButton > 30 && iFrameCount - iFramePressBlockButton < 35 &&
+                   playerActor->IsBlocking()) { // if player was blocking because pressing the button but now no longer pressing
             iFrameStopBlock = 0;
             playerActor->NotifyAnimationGraph("blockStop"sv);
             playerActor->SetGraphVariableBool("IsBlocking"sv, false);
@@ -150,8 +165,8 @@ void ZacOnFrame::CollisionDetection() {
 
         if (lastMeleeHit->hit_causer) {
 
-            if (playerActor->IsBlocking()) {
-                log::trace("Player is now blocking");
+            if (playerActor->IsBlocking() && bHasShield) {
+                log::trace("Player is now blocking with shield");
                 if (bPressButtonToBlock) {
                     // With this option, player needs to be both holding button and have recent collision to block the enemy
                     bool canBlock = false;
@@ -234,16 +249,16 @@ void ZacOnFrame::CollisionDetection() {
 
     RE::NiPoint3 shieldCenter, shieldNormal; // normal is the normalized vector vertical to shield, pointing outwards
     bool isUsingShield = false;
-    if (HasShield(playerActor) && bEnableShieldCollision) {
+    if (bHasShield && bEnableShieldCollision) {
         isUsingShield = true;
         FillShieldCenterNormal(playerActor, shieldCenter, shieldNormal);
     }
     
-    // Deprecated: now we don't care if player is blocking, since our mod may make player enter blocking
-    //if (playerActor->IsBlocking()) {
-    //    log::trace("Player is blocking");
-    //    return;
-    //}
+    // If player is blocking and doesn't have shield, return
+    if (playerActor->IsBlocking() && !bHasShield) {
+        log::trace("Player is blocking");
+        return;
+    }
 
     // If bPlayerMustBeAttacking is true, which is default true for SE/AE, and default false for VR
     // Then we return here, because player must be attacking to parry
@@ -609,9 +624,8 @@ void ZacOnFrame::CollisionDetection() {
 
     if (!bAbleToParry) return;
 
-    // Get nearby enemies and flor/tree
+    // Get nearby enemies
     std::vector<RE::TESObjectREFR*> vNearbyObj;
-    std::vector<RE::TESObjectREFR*> vNearbyTree;
     if (const auto TES = RE::TES::GetSingleton(); TES) {
         TES->ForEachReferenceInRange(playerRef, fDetectEnemy, [&](RE::TESObjectREFR& b_ref) {
             if (const auto base = b_ref.GetBaseObject(); base && b_ref.Is3DLoaded()) {
@@ -774,14 +788,16 @@ void ZacOnFrame::CollisionDetection() {
 
 
             // Now detect collision
-            if (dis_playerL_enemyL.dist < distThres) {
+            if ( (!isUsingShield && dis_playerL_enemyL.dist < distThres) ||
+                (isUsingShield && dis_playerL_enemyL.dist < fShieldCollisionDist)) {
                 isCollision = true;
                 isEnemyLeft = true;
                 isPlayerLeft = true;
                 contactPos = dis_playerL_enemyL.contactPoint;
                 contactToPlayerHand = contactPos.GetDistance(posPlayerHandL);
                 contactToEnemyHand = contactPos.GetDistance(posEnemyHandL);
-            } else if (dis_playerL_enemyR.dist < distThres) {
+            } else if ((!isUsingShield && dis_playerL_enemyR.dist < distThres) ||
+                       (isUsingShield && dis_playerL_enemyR.dist < fShieldCollisionDist)) {
                 isCollision = true;
                 isPlayerLeft = true;
                 contactPos = dis_playerL_enemyR.contactPoint;
@@ -812,6 +828,13 @@ void ZacOnFrame::CollisionDetection() {
                     }
                 }
 
+                // If player is not pressing block button, not a collision
+                if (bPressButtonToBlock && bHasShield && isPlayerLeft && bEnableShieldCollision &&
+                    iFrameCount - iFramePressBlockButton > 30) {
+                    log::trace("Player is not pressing the block button");
+                    continue;
+                }
+
                 // create a new collision
                 auto playerWeapSpeed = isPlayerLeft ? leftSpeed : rightSpeed;
                 auto speed = playerWeapSpeed.SqrLength();
@@ -827,7 +850,7 @@ void ZacOnFrame::CollisionDetection() {
                 }
                 bool isRotClockwise = ShouldRotateClockwise(playerActor->GetPosition(), actorNPC->GetPosition(), playerWeapSpeed);
                 int64_t rotDurationFrame = RotateFrame(playerWeapSpeed.SqrLength());
-                if (HasShield && isPlayerLeft) {
+                if (bHasShield && isPlayerLeft) {
                     rotDurationFrame /= 3;
                     pushEnemyVelocity = pushEnemyVelocity * 0.4f;
                 }
@@ -852,7 +875,7 @@ void ZacOnFrame::CollisionDetection() {
                 static PlayerCollision* latestCol = PlayerCollision::GetSingleton();
                 RE::hkVector4 pushPlayerVelocity =
                     CalculatePushVector(actorNPC->GetPosition(), playerActor->GetPosition(), false, speed);
-                if (HasShield && isPlayerLeft) pushPlayerVelocity = pushPlayerVelocity * 0.0f;
+                if (bHasShield && isPlayerLeft) pushPlayerVelocity = pushPlayerVelocity * 0.0f;
                 latestCol->SetValue(iFrameCount, contactToPlayerHand, isPlayerLeft, pushPlayerVelocity, 10,
                                     CalculatePushDist(false, speed), playerActor->GetPosition(), playerActor);
 
@@ -972,17 +995,22 @@ void ZacOnFrame::CollisionEffect(RE::Actor* playerActor, RE::Actor* enemyActor, 
     
     // (Block - 1) Make player enter block pose and change ConeAngle
     if (isBlock) {
-        if (!playerActor->IsBlocking()) {
+       
+        bool isBlocking = playerActor->IsBlocking();
+        bool isVanillaBlocking = isBlocking && iFrameStopBlock == 0;
+
+        // As long as player is not currently blocking, we should let them enter blocking pose
+        if (!isBlocking) {
             bool bNotifyResult = playerActor->NotifyAnimationGraph("blockStart"sv);
             log::debug("Processing shield collision as block. Animation notify result:{}", bNotifyResult);
         }
-        if (playerActor->IsBlocking() && iFrameStopBlock == 0) {
-            // if player is blocking using vanilla holding shield, we don't set iFrameStopBlock
-        } else {
-            // otherwise, update iFrameStopBlock
-            iFrameStopBlock = iFrameCount + iFrameBlockDur;
+
+        // If player is using vanilla blocking, don't set iFrameStopBlock. Otherwise, set it (probably an update)
+        if (!isVanillaBlocking) iFrameStopBlock = iFrameCount + iFrameBlockDur;
+
+        if (speed > fBlockEnemyLargeRecoilVelocityThres) {
+            RecoilEffect(enemyActor, 2);
         }
-        
 
         // Also, change cone. Skyrim checks if two actors are facing each other before it decides if block happens
         // Use papyrus to set fCombatHitConeAngle
