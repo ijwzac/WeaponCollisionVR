@@ -817,7 +817,7 @@ void ZacOnFrame::CollisionDetection() {
             } 
             if (isCollision) {
 
-                if (fPlayerStaUnableParryThresPer > 0.0f && playerActor->AsActorValueOwner()) {
+                if (fPlayerStaUnableParryThresPer > 0.0f && !isUsingShield && playerActor->AsActorValueOwner()) {
                     auto playerCurSta = playerActor->AsActorValueOwner()->GetActorValue(RE::ActorValue::kStamina);
                     if (playerCurSta <
                         fPlayerStaUnableParryThresPer *
@@ -850,7 +850,7 @@ void ZacOnFrame::CollisionDetection() {
                 }
                 bool isRotClockwise = ShouldRotateClockwise(playerActor->GetPosition(), actorNPC->GetPosition(), playerWeapSpeed);
                 int64_t rotDurationFrame = RotateFrame(playerWeapSpeed.SqrLength());
-                if (bHasShield && isPlayerLeft) {
+                if (bHasShield && isPlayerLeft && speed < fBlockEnemyLargeRecoilVelocityThres) {
                     rotDurationFrame /= 3;
                     pushEnemyVelocity = pushEnemyVelocity * 0.4f;
                 }
@@ -1009,7 +1009,9 @@ void ZacOnFrame::CollisionEffect(RE::Actor* playerActor, RE::Actor* enemyActor, 
         if (!isVanillaBlocking) iFrameStopBlock = iFrameCount + iFrameBlockDur;
 
         if (speed > fBlockEnemyLargeRecoilVelocityThres) {
+            log::debug("Block with high speed. Large recoil to enemy");
             RecoilEffect(enemyActor, 2);
+            TimeSlowEffect(playerActor, iTimeSlowFrameLargeRecoil);
         }
 
         // Also, change cone. Skyrim checks if two actors are facing each other before it decides if block happens

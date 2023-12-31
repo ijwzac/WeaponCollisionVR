@@ -466,7 +466,7 @@ void Settings::Block::Load(CSimpleIniA& a_ini) {
         "; Default:\"30\"");
 
     detail::get_value(a_ini, fBlockEnemyLargeRecoilVelocityThres, section, "BlockStaggerVelocityThreshold",
-        "; When player's shield speed is above this, enemy will stop the current attack and stagger.\n"
+        "; When player's shield speed is above this, enemy will stagger, pushed back more, and have timeslow effect.\n"
         "; Unit:~ 1.5 cm per second. \"100.0\"");
 
     detail::get_value(
@@ -579,7 +579,7 @@ void Settings::Technique::Load(CSimpleIniA& a_ini) {
         "change.\n"
         ";\n"
         "; Set to 2 to only have info. 1 to turn on debug. 0 to turn on trace. Printing to C:\\Users\\XXX\\Documents\\My Games\\Skyrim VR\\SKSE\\WeaponCollision.log\n"
-        "; In the worst case, turning this on makes the file grow at 10MB/minute, and might slow the game down (very unlikely), but useful when you report bugs to me. Default:\"2\"");
+        "; In the worst case, setting to 0 makes the file grow at 10MB/minute, and might slow the game down (very unlikely), but useful when you report bugs to me. Default:\"2\"");
 
 
     detail::get_value(a_ini, fDetectEnemy, section, "EnemyDetectionRange",

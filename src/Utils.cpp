@@ -360,13 +360,19 @@ RE::SpellItem* GetTimeSlowSpell_SpeelWheel() {
         log::trace("GetTimeSlowSpell: didn't get vrik mod");
     }
 
-
-    RE::FormID partFormID = 0x000EA5;
-    RE::FormID fullFormID = GetFullFormID(spellWheelIndex.value(), partFormID);
-    RE::SpellItem* timeSlowSpell = RE::TESForm::LookupByID<RE::SpellItem>(fullFormID); 
+    // Thanks to Shizof, there is a spell with formID 20A00 that is specifically added in Spell Wheel VR for our convenience 
+    // So we should try this one first
+    RE::FormID partFormID1 = 0x020A00;
+    RE::FormID partFormID2 = 0x000EA5; // this is the spell that Spell wheel itself uses to slow time. We should avoid using it now
+    RE::FormID fullFormID1 = GetFullFormID(spellWheelIndex.value(), partFormID1);
+    RE::SpellItem* timeSlowSpell = RE::TESForm::LookupByID<RE::SpellItem>(fullFormID1); 
     if (!timeSlowSpell) {
-        log::error("GetTimeSlowSpell: failed to get timeslow spell");
-        return nullptr;
+        RE::FormID fullFormID2 = GetFullFormID(spellWheelIndex.value(), partFormID2);
+        timeSlowSpell = RE::TESForm::LookupByID<RE::SpellItem>(fullFormID2);
+        if (!timeSlowSpell) {
+            log::error("GetTimeSlowSpell: failed to get timeslow spell");
+            return nullptr;
+        }
     }
     return timeSlowSpell;
 }
@@ -860,6 +866,7 @@ void RecoilEffect(RE::Actor* actor, int strength) {
             actor->NotifyAnimationGraph("AttackStop");
             if (strength == 2) {
                 actor->NotifyAnimationGraph("recoilLargeStart");
+                log::debug("Human. Large recoil");
                 canRagdoll = true;
             }
             break;
