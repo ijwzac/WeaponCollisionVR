@@ -25,12 +25,13 @@ void ZacOnFrame::InstallFrameHook() {
         trampoline.write_call<5>(OnFrameBase.address() + REL::Relocate(0x748, 0xc26, 0x7ee), ZacOnFrame::OnFrameUpdate);
 
 
-    // Now we need to make the 2-byte jna at SkyrimVR.exe+0x76e5f3 to be nop
+    if (bEnableShieldCollision) {
+        // Now we need to make the 2-byte jna at SkyrimVR.exe+0x76e5f3 to be nop
 
-    REL::safe_write(OnFrameBase.address() + 0x1B3AE3, NOP2);  // 0x1B3AE3 is 0x76e5f3 - 0x5bab10 
+        REL::safe_write(OnFrameBase.address() + 0x1B3AE3, NOP2);  // 0x1B3AE3 is 0x76e5f3 - 0x5bab10
 
-    
-    log::info("Safe write NOP to {:x}", OnFrameBase.address() + 0x1B3AE3);
+        log::info("Safe write NOP to {:x}", OnFrameBase.address() + 0x1B3AE3);
+    }
 }
 
 bool isOurFnRunning = false;
