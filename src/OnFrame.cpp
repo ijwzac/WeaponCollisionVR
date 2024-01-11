@@ -514,6 +514,8 @@ void ZacOnFrame::CollisionDetection() {
         auto speedR = speedBuf.GetVelocity(5, false).SqrLength();
         DistResult shortestDist =
             weapPosBuf.ShortestDisRecently(iProjCollisionFrame, proj->GetPosition(), velocity, isSlowed, isUsingShield, speedL, speedR );
+        // If is missile (spell projectiles like fireballs) and bMagicProjParry is false, make shortestDist invalid
+        if (!bMagicProjParry && isMissile) shortestDist.dist = 9999.0f;
         // If using shield, compare with shield collision
         if (isUsingShield && bEnableShieldCollision) {
             if (speedL >= fProjShieldSpeedThres) {
@@ -789,28 +791,33 @@ void ZacOnFrame::CollisionDetection() {
 
 
             // Now detect collision
-            if ( (!isUsingShield && dis_playerL_enemyL.dist < distThres) ||
-                (isUsingShield && dis_playerL_enemyL.dist < fShieldCollisionDist)) {
+            if ((!isUsingShield && dis_playerL_enemyL.dist < distThres &&
+                 (fCollisionSpeedThres < 1.0f || leftSpeed.SqrLength() > fCollisionSpeedThres)) ||
+                (isUsingShield && dis_playerL_enemyL.dist < fShieldCollisionDist))
+                 {
                 isCollision = true;
                 isEnemyLeft = true;
                 isPlayerLeft = true;
                 contactPos = dis_playerL_enemyL.contactPoint;
                 contactToPlayerHand = contactPos.GetDistance(posPlayerHandL);
                 contactToEnemyHand = contactPos.GetDistance(posEnemyHandL);
-            } else if ((!isUsingShield && dis_playerL_enemyR.dist < distThres) ||
+            } else if ((!isUsingShield && dis_playerL_enemyR.dist < distThres &&
+                        (fCollisionSpeedThres < 1.0f || leftSpeed.SqrLength() > fCollisionSpeedThres)) ||
                        (isUsingShield && dis_playerL_enemyR.dist < fShieldCollisionDist)) {
                 isCollision = true;
                 isPlayerLeft = true;
                 contactPos = dis_playerL_enemyR.contactPoint;
                 contactToPlayerHand = contactPos.GetDistance(posPlayerHandL);
                 contactToEnemyHand = contactPos.GetDistance(posEnemyHandR);
-            } else if (dis_playerR_enemyL.dist < distThres) {
+            } else if (dis_playerR_enemyL.dist < distThres &&
+                       (fCollisionSpeedThres < 1.0f || rightSpeed.SqrLength() > fCollisionSpeedThres)) {
                 isCollision = true;
                 isEnemyLeft = true;
                 contactPos = dis_playerR_enemyL.contactPoint;
                 contactToPlayerHand = contactPos.GetDistance(posPlayerHandR);
                 contactToEnemyHand = contactPos.GetDistance(posEnemyHandL);
-            } else if (dis_playerR_enemyR.dist < distThres) {
+            } else if (dis_playerR_enemyR.dist < distThres &&
+                       (fCollisionSpeedThres < 1.0f || rightSpeed.SqrLength() > fCollisionSpeedThres)) {
                 isCollision = true;
                 contactPos = dis_playerR_enemyR.contactPoint;
                 contactToPlayerHand = contactPos.GetDistance(posPlayerHandR);

@@ -9,6 +9,7 @@ bool bHandToHandLoad = false;
 bool bPlanck = false;
 float fRangeMulti = 1.0f;   
 float fCollisionDistThres = 15.0f;
+float fCollisionSpeedThres = 0.0f;
 float fDetectEnemy = 600.f;
 bool bShowPlayerWeaponSegment = false;
 bool bShowEnemyWeaponSegment = false;
@@ -35,6 +36,7 @@ float fBlockEnemyLargeRecoilVelocityThres = 100.0f;
 
 // Projectile Parry
 bool bEnableProjParry = true;
+bool bMagicProjParry = true;
 float fProjDetectRange = 800.0f;  // The range of projectile detection
 float fProjCollisionDistThres = 12.0f;         // If weapon and projectile distance is smaller than this number, it's a collision
 float fProjLength = 50.0f;
@@ -169,6 +171,14 @@ void Settings::Difficulty::Load(CSimpleIniA& a_ini) {
         "; ===If you are a VR player, I am setting this to \"false\" while setting CollisionDistance to a lower value.\n"
         ";         Otherwise you can't parry naturally. \n"
         "; Default:\"true\" for SE or AE player, \"false\" for VR player");
+
+    detail::get_value(
+        a_ini, fCollisionSpeedThres, section, "WeaponCollisionSpeed",
+        "; To trigger a collision between two weapons, player's weapon speed must be larger than this value. Doesn't affect shield collision.\n"
+                      "; Smaller value means easier parry. If you feel it's too easy to trigger parry in VR, set "
+                      "this to values like 15.0.\n"
+        "; Unit: around 1.4 centimeter/second. Default:\"0.0\" (the speed is not checked)");
+
 
     detail::get_value(
         a_ini, fCollisionDistThres, section, "WeaponCollisionDistance",
@@ -507,6 +517,9 @@ void Settings::Block::Load(CSimpleIniA& a_ini) {
 
 void Settings::Projectile::Load(CSimpleIniA& a_ini) {
     static const char* section = "==========7. Projectile Parry==========";
+    detail::get_value(a_ini, bMagicProjParry, section, "EnableMagicProjectileParry",
+        "; If this is false, you are not able to parry magic projectiles like fireballs using weapons. You are always able to parry them using shields\n"
+        "; Default:\"true\"");
 
     
     detail::get_value(a_ini, fProjCollisionDistThres, section, "ProjectileParryDistance",

@@ -28,9 +28,11 @@ extern float fRangeMulti;          // controls the effective length of weapon in
 extern float fCollisionDistThres;  // if two weapons are closer than this number, it's a collision
 extern float fShieldCollisionDist;  // if two weapons are closer than this number, it's a collision
 extern bool bPlayerMustBeAttacking; // Recommended for non-VR players to turn on. VR player should turn off.
+extern float fCollisionSpeedThres; // if set above 1.0, player's weapon speed must exceed this value to trigger collision
 
 // Projectile Parry
 extern bool bEnableProjParry;
+extern bool bMagicProjParry;
 extern float fProjDetectRange; // The range of projectile detection
 extern float fProjLength; // The segment of projectile is from its position to a point ahead of it, calculated using its velocity
 extern float fProjCollisionDistThres; // If weapon and projectile distance is smaller than this number, it's a collision
